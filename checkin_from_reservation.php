@@ -5,10 +5,10 @@ requireRole(['admin', 'manager', 'frontdesk']);
 $bookingId = (int) ($_GET['id'] ?? 0);
 
 $stmt = db()->prepare("
-  SELECT b.*, r.room_number, r.status AS room_status, rt.name AS room_type_name
+  SELECT b.*, COALESCE(r.room_number, 'Unassigned') AS room_number, COALESCE(r.status, 'available') AS room_status, COALESCE(rt.name, 'Standard') AS room_type_name
   FROM bookings b
-  JOIN rooms r ON r.id = b.room_id
-  JOIN room_types rt ON rt.id = r.room_type_id
+  LEFT JOIN rooms r ON r.id = b.room_id
+  LEFT JOIN room_types rt ON rt.id = r.room_type_id
   WHERE b.id = :id AND b.status = 'reserved'
 ");
 $stmt->execute(['id' => $bookingId]);
@@ -20,7 +20,7 @@ if (!$booking) {
 }
 
 $bookingRooms = getBookingRooms($bookingId);
-$roomNumbersStr = implode(', ', array_map(fn($r) => 'Room ' . $r['room_number'] . ' (' . $r['room_type_name'] . ')', $bookingRooms));
+$roomNumbersStr = implode(', ', array_map(fn($r) => ($r['room_number'] !== 'Unassigned' ? 'Room ' . $r['room_number'] : 'Unassigned') . ' (' . $r['room_type_name'] . ')', $bookingRooms));
 
 $gStmt = db()->prepare("
   SELECT g.* FROM booking_guests bg JOIN guests g ON g.id = bg.guest_id

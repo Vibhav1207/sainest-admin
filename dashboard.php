@@ -66,20 +66,38 @@ $pendingTasks = (int) db()->query("SELECT COUNT(*) c FROM housekeeping_tasks WHE
 
 /* Recent bookings */
 $recentBookings = db()->query("
-  SELECT b.*, r.room_number, g.full_name AS guest_name
+  SELECT b.*,
+         COALESCE(
+           NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
+           r_primary.room_number,
+           'Unassigned'
+         ) AS room_number,
+         g.full_name AS guest_name
   FROM bookings b
-  JOIN rooms r ON r.id = b.room_id
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN booking_rooms br ON br.booking_id = b.id
+  LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
   JOIN guests g ON g.id = b.primary_guest_id
+  GROUP BY b.id
   ORDER BY b.created_at DESC LIMIT 8
 ")->fetchAll();
 
 /* Rooms due for checkout today */
 $dueOutList = db()->prepare("
-  SELECT b.*, r.room_number, g.full_name AS guest_name
+  SELECT b.*,
+         COALESCE(
+           NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
+           r_primary.room_number,
+           'Unassigned'
+         ) AS room_number,
+         g.full_name AS guest_name
   FROM bookings b
-  JOIN rooms r ON r.id = b.room_id
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN booking_rooms br ON br.booking_id = b.id
+  LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
   JOIN guests g ON g.id = b.primary_guest_id
   WHERE b.status='checked_in' AND b.expected_checkout_date = :d
+  GROUP BY b.id
   ORDER BY b.checkin_datetime ASC
 ");
 $dueOutList->execute(['d' => $today]);
@@ -87,11 +105,20 @@ $dueOutList = $dueOutList->fetchAll();
 
 /* Advance bookings (reservations) arriving today or soon */
 $upcomingReservations = db()->query("
-  SELECT b.*, r.room_number, g.full_name AS guest_name, g.phone AS guest_phone
+  SELECT b.*,
+         COALESCE(
+           NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
+           r_primary.room_number,
+           'Unassigned'
+         ) AS room_number,
+         g.full_name AS guest_name, g.phone AS guest_phone
   FROM bookings b
-  JOIN rooms r ON r.id = b.room_id
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN booking_rooms br ON br.booking_id = b.id
+  LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
   JOIN guests g ON g.id = b.primary_guest_id
   WHERE b.status = 'reserved'
+  GROUP BY b.id
   ORDER BY b.checkin_datetime ASC
   LIMIT 8
 ")->fetchAll();

@@ -13,11 +13,12 @@ $sql = "
   SELECT b.*,
          COALESCE(
            NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
-           r_primary.room_number
+           r_primary.room_number,
+           'Unassigned'
          ) AS room_number,
          g.full_name AS guest_name, g.phone AS guest_phone
   FROM bookings b
-  JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
   LEFT JOIN booking_rooms br ON br.booking_id = b.id
   LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
   JOIN guests g ON g.id = b.primary_guest_id

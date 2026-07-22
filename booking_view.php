@@ -5,10 +5,10 @@ requireRole(['admin', 'manager', 'frontdesk']);
 $bookingId = (int) ($_GET['id'] ?? 0);
 
 $stmt = db()->prepare("
-  SELECT b.*, r.room_number, rt.name AS room_type_name, u1.full_name AS created_by_name, u2.full_name AS checked_out_by_name
+  SELECT b.*, COALESCE(r.room_number, 'Unassigned') AS room_number, COALESCE(rt.name, 'Standard') AS room_type_name, u1.full_name AS created_by_name, u2.full_name AS checked_out_by_name
   FROM bookings b
-  JOIN rooms r ON r.id = b.room_id
-  JOIN room_types rt ON rt.id = r.room_type_id
+  LEFT JOIN rooms r ON r.id = b.room_id
+  LEFT JOIN room_types rt ON rt.id = r.room_type_id
   LEFT JOIN users u1 ON u1.id = b.created_by
   LEFT JOIN users u2 ON u2.id = b.checked_out_by
   WHERE b.id = :id
@@ -43,7 +43,7 @@ $invStmt->execute(['id' => $bookingId]);
 $invoice = $invStmt->fetch();
 
 $bookingRooms = getBookingRooms($bookingId);
-$roomNumbersStr = implode(', ', array_map(fn($r) => 'Room ' . $r['room_number'] . ' (' . $r['room_type_name'] . ')', $bookingRooms));
+$roomNumbersStr = implode(', ', array_map(fn($r) => ($r['room_number'] !== 'Unassigned' ? 'Room ' . $r['room_number'] : 'Unassigned') . ' (' . $r['room_type_name'] . ')', $bookingRooms));
 $itemizedExtraCharges = getBookingExtraCharges($bookingId);
 
 $pageTitle = 'Booking ' . $booking['booking_code'];
@@ -151,8 +151,8 @@ require __DIR__ . '/includes/layout_top.php';
       <tbody>
         <?php foreach ($bookingRooms as $br): ?>
           <tr>
-            <td><strong>Room <?= e($br['room_number']) ?></strong></td>
-            <td>Floor <?= e($br['floor']) ?></td>
+            <td><strong><?= $br['room_number'] !== 'Unassigned' ? 'Room ' . e($br['room_number']) : '<span class="badge badge-gray">Unassigned</span>' ?></strong></td>
+            <td><?= $br['floor'] !== '—' ? 'Floor ' . e($br['floor']) : '—' ?></td>
             <td><?= e($br['room_type_name']) ?></td>
             <td><?= money((float)($br['rate_per_night'] ?? 0)) ?></td>
           </tr>
