@@ -54,25 +54,21 @@ try {
     $selectedRooms = [];
     if (!empty($postRoomIds) && is_array($postRoomIds)) {
         foreach ($postRoomIds as $idx => $rId) {
-            $id = (int) $rId;
+            $id = !empty($rId) ? (int) $rId : null;
             $rate = (float) ($postRoomRates[$idx] ?? 0);
-            if ($id > 0) {
-                $selectedRooms[] = ['room_id' => $id, 'rate' => $rate];
-            }
+            $selectedRooms[] = ['room_id' => $id, 'rate' => $rate];
         }
     }
 
     // Fallback if single room submitted
     if (empty($selectedRooms)) {
-        $legacyRoomId = (int) ($_POST['room_id'] ?? 0);
+        $legacyRoomId = !empty($_POST['room_id']) ? (int) $_POST['room_id'] : null;
         $legacyRate   = (float) ($_POST['rate_per_night'] ?? 0);
-        if ($legacyRoomId > 0) {
-            $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate];
-        }
+        $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate];
     }
 
     if (empty($selectedRooms)) {
-        throw new RuntimeException('At least one valid room must be selected.');
+        throw new RuntimeException('At least one room or room type must be selected.');
     }
 
     // ---- Parse other POST fields ----
@@ -150,38 +146,44 @@ try {
     $newRoomIds = [];
 
     foreach ($selectedRooms as $sr) {
-        $roomStmt->execute(['id' => $sr['room_id']]);
-        $room = $roomStmt->fetch();
-        if (!$room) {
-            throw new RuntimeException('Selected room ID ' . $sr['room_id'] . ' does not exist.');
-        }
-        if ($room['status'] === 'maintenance') {
-            throw new RuntimeException('Room ' . $room['room_number'] . ' is under maintenance.');
-        }
+        if (!empty($sr['room_id'])) {
+            $roomStmt->execute(['id' => $sr['room_id']]);
+            $room = $roomStmt->fetch();
+            if (!$room) {
+                throw new RuntimeException('Selected room ID ' . $sr['room_id'] . ' does not exist.');
+            }
+            if ($room['status'] === 'maintenance') {
+                throw new RuntimeException('Room ' . $room['room_number'] . ' is under maintenance.');
+            }
 
-        // If booking is checked_in and room is newly added, make sure it isn't occupied by someone else
-        $isNewlyAdded = !in_array($sr['room_id'], $oldRoomIds, true);
-        if ($oldBooking['status'] === 'checked_in' && $isNewlyAdded && $room['status'] === 'occupied') {
-            throw new RuntimeException('Room ' . $room['room_number'] . ' is currently occupied by another guest.');
-        }
+            // If booking is checked_in and room is newly added, make sure it isn't occupied by someone else
+            $isNewlyAdded = !in_array($sr['room_id'], $oldRoomIds, true);
+            if ($oldBooking['status'] === 'checked_in' && $isNewlyAdded && $room['status'] === 'occupied') {
+                throw new RuntimeException('Room ' . $room['room_number'] . ' is currently occupied by another guest.');
+            }
 
-        // Conflict check
-        $conflict = getRoomBookingConflict($sr['room_id'], $checkinDate, $checkoutDate, $bookingId);
-        if ($conflict) {
-            throw new RuntimeException(
-                'Room ' . $room['room_number'] . ' has a conflicting booking (code: ' .
-                $conflict['booking_code'] . ') from ' .
-                date('d M Y', strtotime($conflict['checkin_datetime'])) . ' to ' .
-                date('d M Y', strtotime($conflict['expected_checkout_date'])) .
-                '. Please choose different dates or a different room.'
-            );
+            // Conflict check
+            $conflict = getRoomBookingConflict($sr['room_id'], $checkinDate, $checkoutDate, $bookingId);
+            if ($conflict) {
+                throw new RuntimeException(
+                    'Room ' . $room['room_number'] . ' has a conflicting booking (code: ' .
+                    $conflict['booking_code'] . ') from ' .
+                    date('d M Y', strtotime($conflict['checkin_datetime'])) . ' to ' .
+                    date('d M Y', strtotime($conflict['expected_checkout_date'])) .
+                    '. Please choose different dates or a different room.'
+                );
+            }
+            $newRoomIds[] = $sr['room_id'];
         }
-
         $totalNightlyRate += $sr['rate'];
-        $newRoomIds[] = $sr['room_id'];
     }
 
-    $primaryRoomId = $selectedRooms[0]['room_id'];
+    // Override rate if explicitly posted
+    if (isset($_POST['rate_per_night']) && $_POST['rate_per_night'] !== '') {
+        $totalNightlyRate = (float) $_POST['rate_per_night'];
+    }
+
+    $primaryRoomId = !empty($selectedRooms[0]['room_id']) ? $selectedRooms[0]['room_id'] : null;
 
     // ---- Update main booking record ----
     $pdo->prepare("

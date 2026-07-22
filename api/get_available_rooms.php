@@ -16,27 +16,26 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $checkinDate) || !preg_match('/^\d{4}-\
     exit;
 }
 
-ensureRoomTypesMigrated();
+try { ensureRoomTypesMigrated(); } catch (Throwable $ignored) {}
 
-// Fetch all non-maintenance rooms
-$rooms = db()->query("
-    SELECT r.*, rt.name AS type_name, rt.base_rate, rt.max_guests
-    FROM rooms r
-    JOIN room_types rt ON rt.id = r.room_type_id
-    WHERE r.status != 'maintenance'
-    ORDER BY CAST(r.room_number AS UNSIGNED) ASC
-")->fetchAll();
+try {
+    // Fetch all non-maintenance rooms (LEFT JOIN so rooms without room_type_id are still included)
+    $rooms = db()->query("
+        SELECT r.*, 
+               COALESCE(rt.name, 'Standard') AS type_name, 
+               COALESCE(rt.base_rate, 0) AS base_rate, 
+               COALESCE(rt.max_guests, 2) AS max_guests
+        FROM rooms r
+        LEFT JOIN room_types rt ON rt.id = r.room_type_id
+        WHERE r.status != 'maintenance'
+        ORDER BY CAST(r.room_number AS UNSIGNED) ASC
+    ")->fetchAll();
 
-$availableRooms = [];
-foreach ($rooms as $r) {
-    // If check-in date is today and room is currently dirty, or maintenance, not available
-    if ($r['status'] === 'maintenance') {
-        continue;
-    }
-    
-    // Check for overlapping bookings
-    $conflict = getRoomBookingConflict((int)$r['id'], $checkinDate, $checkoutDate, $excludeId);
-    if (!$conflict) {
+    $availableRooms = [];
+    foreach ($rooms as $r) {
+        // Check for overlapping bookings
+        $conflict = getRoomBookingConflict((int)$r['id'], $checkinDate, $checkoutDate, $excludeId);
+
         $availableRooms[] = [
             'id'           => (int)$r['id'],
             'room_number'  => $r['room_number'],
@@ -45,11 +44,19 @@ foreach ($rooms as $r) {
             'base_rate'    => (float)$r['base_rate'],
             'max_guests'   => (int)$r['max_guests'],
             'status'       => $r['status'],
+            'is_available' => !$conflict,
+            'conflict'     => $conflict ? ('Booking ' . $conflict['booking_code']) : null,
         ];
     }
-}
 
-echo json_encode([
-    'success' => true,
-    'rooms'   => $availableRooms,
-]);
+    echo json_encode([
+        'success' => true,
+        'rooms'   => $availableRooms,
+    ]);
+} catch (Throwable $e) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'DB error: ' . $e->getMessage(),
+        'rooms'   => [],
+    ]);
+}

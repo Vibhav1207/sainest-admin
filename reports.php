@@ -30,11 +30,17 @@ require __DIR__ . '/includes/layout_top.php';
 <div class="page-header">
   <div>
     <h2>Reports &amp; Analytics</h2>
-    <div class="desc">Filter, analyze and export comprehensive performance metrics.</div>
+    <div class="desc">Filter, analyze, export and share comprehensive performance metrics.</div>
   </div>
-  <div class="page-actions">
+  <div class="page-actions" style="display:flex; gap:10px; flex-wrap:wrap;">
     <button type="button" id="mainExportBtn" class="btn btn-gold" onclick="exportToExcel('all')" style="gap:6px; display:inline-flex; align-items:center;">
       <span class="export-icon">📊</span> <span class="export-text">Export Filtered Data to Excel</span>
+    </button>
+    <button type="button" class="btn btn-outline" onclick="shareReport('whatsapp')" style="gap:6px; display:inline-flex; align-items:center; background:#25D366; color:#fff; border-color:#25D366; font-weight:600;">
+      <span>📱</span> <span>Share to WhatsApp</span>
+    </button>
+    <button type="button" class="btn btn-outline" onclick="shareReport('email')" style="gap:6px; display:inline-flex; align-items:center; font-weight:600;">
+      <span>✉️</span> <span>Share via Email</span>
     </button>
   </div>
 </div>
@@ -507,6 +513,48 @@ function exportToExcel(category = 'all') {
     text.textContent = oldText;
     btn.disabled = false;
   }, 2500);
+}
+
+function shareReport(channel) {
+  // Build summary text from currently displayed KPIs
+  const totalRev   = document.getElementById('kpiTotRev')   ? document.getElementById('kpiTotRev').textContent   : '—';
+  const invCount   = document.getElementById('kpiInvCount') ? document.getElementById('kpiInvCount').textContent : '—';
+  const actualRev  = document.getElementById('kpiActualRev')  ? document.getElementById('kpiActualRev').textContent  : null;
+  const commPayable= document.getElementById('kpiCommPayable')? document.getElementById('kpiCommPayable').textContent: null;
+
+  // Build filter description
+  const preset     = document.getElementById('presetSelect')   ? document.getElementById('presetSelect').options[document.getElementById('presetSelect').selectedIndex].text : '';
+  const fromDate   = document.getElementById('fromDate')       ? document.getElementById('fromDate').value   : '';
+  const toDate     = document.getElementById('toDate')         ? document.getElementById('toDate').value     : '';
+  const periodText = preset ? preset.replace(/[^a-zA-Z0-9\s]/g,'').trim() : (fromDate + ' to ' + toDate);
+
+  // Build export link with current filters
+  const form   = document.getElementById('reportFilterForm');
+  const params = new URLSearchParams(new FormData(form)).toString();
+  const exportUrl = `<?= BASE_URL ?>/export_reports.php?${params}`;
+
+  const lines = [
+    '🏨 Hotel Sai Nest — Report Summary',
+    '📅 Period: ' + periodText,
+    '─────────────────────────',
+    '💰 Total Revenue: ' + totalRev,
+    '🧾 Invoices Generated: ' + invCount,
+  ];
+  if (actualRev)   lines.push('🏨 Actual Room Revenue: ' + actualRev);
+  if (commPayable) lines.push('🤝 Commission Payable: ' + commPayable);
+  lines.push('─────────────────────────');
+  lines.push('📊 Download Excel Report: ' + exportUrl);
+
+  const message = lines.join('\n');
+
+  if (channel === 'whatsapp') {
+    const waUrl = 'https://api.whatsapp.com/send?text=' + encodeURIComponent(message);
+    window.open(waUrl, '_blank');
+  } else if (channel === 'email') {
+    const subject = encodeURIComponent('Hotel Sai Nest — Report Summary (' + periodText + ')');
+    const body    = encodeURIComponent(message);
+    window.location.href = 'mailto:?subject=' + subject + '&body=' + body;
+  }
 }
 
 function escapeHtml(str) {

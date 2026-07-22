@@ -5,11 +5,24 @@ requireRole(['admin', 'manager', 'frontdesk']);
 $pageTitle = 'Advance Booking';
 $activeNav = 'advance_booking';
 
-ensureRoomTypesMigrated();
+try { ensureRoomTypesMigrated(); } catch (Throwable $e) {}
 $roomTypes = getRoomTypes();
+
+// Load all non-maintenance rooms server-side (same as checkin.php approach)
+$availableRooms = db()->query("
+    SELECT r.id, r.room_number, r.room_type_id, r.status,
+           COALESCE(rt.name, 'Standard') AS type_name,
+           COALESCE(rt.base_rate, 0)     AS base_rate,
+           COALESCE(rt.max_guests, 2)    AS max_guests
+    FROM rooms r
+    LEFT JOIN room_types rt ON rt.id = r.room_type_id
+    WHERE r.status != 'maintenance'
+    ORDER BY CAST(r.room_number AS UNSIGNED) ASC
+")->fetchAll(PDO::FETCH_ASSOC);
 
 $defaultCheckin  = date('Y-m-d');
 $defaultCheckout = date('Y-m-d', strtotime('+1 day'));
+
 
 require __DIR__ . '/includes/layout_top.php';
 ?>
@@ -321,21 +334,22 @@ require __DIR__ . '/includes/layout_top.php';
 
 <script>
 const BASE_URL = "<?= BASE_URL ?>";
+const AVAILABLE_ROOMS = <?= json_encode(array_values($availableRooms)) ?>;
 const roomTypeSelect = document.getElementById('roomTypeSelect');
-const roomSelect = document.getElementById('roomSelect');
-const rateInput = document.getElementById('rateInput');
-const addRoomBtn = document.getElementById('addRoomBtn');
+const roomSelect     = document.getElementById('roomSelect');
+const rateInput      = document.getElementById('rateInput');
+const addRoomBtn     = document.getElementById('addRoomBtn');
 const roomSelectError = document.getElementById('roomSelectError');
-const checkinDate = document.getElementById('checkinDate');
-const checkoutDate = document.getElementById('checkoutDate');
+const checkinDate    = document.getElementById('checkinDate');
+const checkoutDate   = document.getElementById('checkoutDate');
 const commissionPercent = document.getElementById('commissionPercent');
-const commissionAmount = document.getElementById('commissionAmount');
-const taxPercentInput = document.getElementById('taxPercentInput');
+const commissionAmount  = document.getElementById('commissionAmount');
+const taxPercentInput   = document.getElementById('taxPercentInput');
 
-// Multi-room map: roomId -> { roomId, roomNumber, typeName, rate }
+// Multi-room map: key -> { roomId, roomNumber, typeName, rate, roomTypeId }
 const selectedRoomsMap = new Map();
-let availableRoomsList = [];
 let additionalChargesTotal = 0;
+
 
 function escapeHtml(unsafe) {
   if (!unsafe) return '';
@@ -347,63 +361,48 @@ function escapeHtml(unsafe) {
      .replace(/'/g, "&#039;");
 }
 
-function fetchAvailableRooms() {
-  const cIn = checkinDate.value;
-  const cOut = checkoutDate.value;
-  if (!cIn || !cOut) return;
-
-  fetch(BASE_URL + '/api/get_available_rooms.php?checkin=' + encodeURIComponent(cIn) + '&checkout=' + encodeURIComponent(cOut))
-    .then(r => r.json())
-    .then(data => {
-      if (data.success) {
-        availableRoomsList = data.rooms;
-        
-        // Remove any previously selected room that is no longer available for these dates
-        selectedRoomsMap.forEach((room, id) => {
-          const isStillAvailable = availableRoomsList.some(r => r.id === id);
-          if (!isStillAvailable) {
-            selectedRoomsMap.delete(id);
-            alert('Room ' + room.roomNumber + ' is unavailable for the newly selected dates and has been removed from your selection.');
-          }
-        });
-
-        updateAvailableRoomDropdown();
-        renderSelectedRooms();
-      }
-    })
-    .catch(err => console.error('Failed to load available rooms:', err));
-}
-
 function updateAvailableRoomDropdown() {
   const selectedTypeId = roomTypeSelect.value;
-  roomSelect.innerHTML = '<option value="">-- Choose Room Number --</option>';
-  
+  roomSelect.innerHTML = '<option value="">-- Unassigned (Room Type Only) --</option>';
+
   if (!selectedTypeId) {
     roomSelect.disabled = true;
     rateInput.value = '';
     return;
   }
-  
-  const filtered = availableRoomsList.filter(r => r.room_type_id == selectedTypeId && !selectedRoomsMap.has(parseInt(r.id)));
-  
-  if (filtered.length === 0) {
-    roomSelect.innerHTML = '<option value="">No available rooms for selected type &amp; dates.</option>';
-    roomSelect.disabled = true;
-    rateInput.value = '';
-    return;
-  }
-  
+
+  const filtered = AVAILABLE_ROOMS.filter(r => String(r.room_type_id) === String(selectedTypeId));
+
   filtered.forEach(r => {
+    const isAlreadySelected = Array.from(selectedRoomsMap.values()).some(sr => sr.roomId === parseInt(r.id));
+    if (isAlreadySelected) return;
+
     const opt = document.createElement('option');
-    opt.value = r.id;
-    opt.dataset.rate = r.base_rate;
-    opt.dataset.number = r.room_number;
+    opt.value      = r.id;
+    opt.dataset.rate     = r.base_rate;
+    opt.dataset.number   = r.room_number;
     opt.dataset.typename = r.type_name;
-    opt.textContent = 'Room ' + r.room_number;
+    const statusLabel = r.status === 'available' ? '✅ Available' : ('⚠️ ' + r.status);
+    opt.textContent = 'Room ' + r.room_number + ' — ' + statusLabel;
+    if (r.status !== 'available') opt.style.color = '#999';
     roomSelect.appendChild(opt);
   });
-  
+
+  if (filtered.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '— No rooms found for this type —';
+    opt.disabled = true;
+    roomSelect.appendChild(opt);
+  }
+
   roomSelect.disabled = false;
+
+  // Auto-fill rate from first available room for this type
+  const firstAvail = filtered.find(r => r.status === 'available');
+  if (firstAvail && !rateInput.value) {
+    rateInput.value = firstAvail.base_rate;
+  }
 }
 
 function renderSelectedRooms() {
@@ -413,21 +412,22 @@ function renderSelectedRooms() {
   hiddenInputs.innerHTML = '';
 
   if (selectedRoomsMap.size === 0) {
-    body.innerHTML = '<tr id="emptyRoomsRow"><td colspan="4" class="text-muted" style="text-align:center; padding:18px;">No rooms added yet. Select dates above, choose a Room Type and Room Number, then click <strong>➕ Add Room</strong>.</td></tr>';
+    body.innerHTML = '<tr id="emptyRoomsRow"><td colspan="4" class="text-muted" style="text-align:center; padding:18px;">No rooms added yet. Select a Room Type above and click <strong>➕ Add Room</strong> (Room number is optional).</td></tr>';
     recalcSummary();
     return;
   }
 
-  selectedRoomsMap.forEach((room, id) => {
+  selectedRoomsMap.forEach((room, key) => {
     const tr = document.createElement('tr');
+    const roomDisplay = room.roomId > 0 ? ('Room ' + escapeHtml(room.roomNumber)) : '<span class="badge badge-gray">Unassigned</span>';
     tr.innerHTML = `
-      <td><strong>Room ${escapeHtml(room.roomNumber)}</strong></td>
+      <td><strong>${roomDisplay}</strong></td>
       <td>${escapeHtml(room.typeName)}</td>
       <td>
-        <input type="number" class="form-control form-control-sm" style="max-width:140px; display:inline-block;" step="0.01" min="0" value="${room.rate}" onchange="updateRoomRate(${id}, this.value)">
+        <input type="number" class="form-control form-control-sm" style="max-width:140px; display:inline-block;" step="0.01" min="0" value="${room.rate}" onchange="updateRoomRate('${key}', this.value)">
       </td>
       <td style="text-align:right;">
-        <button type="button" class="btn btn-sm btn-red" onclick="removeSelectedRoom(${id})">✕ Remove</button>
+        <button type="button" class="btn btn-sm btn-red" onclick="removeSelectedRoom('${key}')">✕ Remove</button>
       </td>
     `;
     body.appendChild(tr);
@@ -436,7 +436,7 @@ function renderSelectedRooms() {
     const inputRoom = document.createElement('input');
     inputRoom.type = 'hidden';
     inputRoom.name = 'room_ids[]';
-    inputRoom.value = id;
+    inputRoom.value = room.roomId || '';
     hiddenInputs.appendChild(inputRoom);
 
     const inputRate = document.createElement('input');
@@ -444,20 +444,26 @@ function renderSelectedRooms() {
     inputRate.name = 'room_rates[]';
     inputRate.value = room.rate;
     hiddenInputs.appendChild(inputRate);
+
+    const inputType = document.createElement('input');
+    inputType.type = 'hidden';
+    inputType.name = 'room_type_ids[]';
+    inputType.value = room.roomTypeId || '';
+    hiddenInputs.appendChild(inputType);
   });
 
   recalcSummary();
 }
 
-function updateRoomRate(roomId, newRate) {
-  if (selectedRoomsMap.has(roomId)) {
-    selectedRoomsMap.get(roomId).rate = parseFloat(newRate) || 0;
+function updateRoomRate(key, newRate) {
+  if (selectedRoomsMap.has(key)) {
+    selectedRoomsMap.get(key).rate = parseFloat(newRate) || 0;
     renderSelectedRooms();
   }
 }
 
-function removeSelectedRoom(roomId) {
-  selectedRoomsMap.delete(roomId);
+function removeSelectedRoom(key) {
+  selectedRoomsMap.delete(key);
   renderSelectedRooms();
   updateAvailableRoomDropdown();
 }
@@ -479,7 +485,7 @@ function calcNights() {
 
 function recalcSummary() {
   const totalRooms = selectedRoomsMap.size;
-  const roomNumbers = Array.from(selectedRoomsMap.values()).map(r => 'Room ' + r.roomNumber).join(', ') || 'None';
+  const roomNumbers = Array.from(selectedRoomsMap.values()).map(r => r.roomId > 0 ? ('Room ' + r.roomNumber) : 'Unassigned').join(', ') || 'None';
   const roomTypesSet = new Set(Array.from(selectedRoomsMap.values()).map(r => r.typeName));
   const roomTypesStr = Array.from(roomTypesSet).join(', ') || 'None';
   
@@ -516,7 +522,7 @@ roomTypeSelect.addEventListener('change', updateAvailableRoomDropdown);
 
 roomSelect.addEventListener('change', function () {
   const opt = this.options[this.selectedIndex];
-  if (opt && opt.dataset.rate) {
+  if (opt && opt.dataset && opt.dataset.rate) {
     rateInput.value = opt.dataset.rate;
   }
 });
@@ -524,27 +530,45 @@ roomSelect.addEventListener('change', function () {
 addRoomBtn.addEventListener('click', function () {
   roomSelectError.style.display = 'none';
 
-  const roomId = parseInt(roomSelect.value);
-  if (!roomId) {
-    roomSelectError.textContent = 'Please select an available room number first.';
+  const selectedTypeId = roomTypeSelect.value;
+  if (!selectedTypeId) {
+    roomSelectError.textContent = 'Please select a Room Type first.';
     roomSelectError.style.display = 'block';
     return;
   }
 
-  if (selectedRoomsMap.has(roomId)) {
-    roomSelectError.textContent = 'This room has already been added to the reservation.';
-    roomSelectError.style.display = 'block';
-    return;
-  }
-
-  const opt = roomSelect.options[roomSelect.selectedIndex];
-  const rate = parseFloat(rateInput.value) || parseFloat(opt.dataset.rate) || 0;
+  const selectedTypeOpt = roomTypeSelect.options[roomTypeSelect.selectedIndex];
+  const typeName = selectedTypeOpt ? selectedTypeOpt.text : 'Room';
   
-  selectedRoomsMap.set(roomId, {
+  const rawRoomVal = roomSelect.value;
+  const roomId = parseInt(rawRoomVal) || 0;
+  
+  if (roomId > 0 && Array.from(selectedRoomsMap.values()).some(sr => sr.roomId === roomId)) {
+    roomSelectError.textContent = 'This room number has already been added to the reservation.';
+    roomSelectError.style.display = 'block';
+    return;
+  }
+
+  const opt = roomSelect.selectedIndex >= 0 ? roomSelect.options[roomSelect.selectedIndex] : null;
+  let roomNumber = 'Unassigned';
+  let rate = parseFloat(rateInput.value) || 0;
+
+  if (opt && opt.dataset && opt.dataset.number) {
+    roomNumber = opt.dataset.number;
+    if (!rate && opt.dataset.rate) {
+      rate = parseFloat(opt.dataset.rate) || 0;
+    }
+  }
+
+  const key = roomId > 0 ? String(roomId) : ('unassigned_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4));
+
+  selectedRoomsMap.set(key, {
+    key: key,
     roomId: roomId,
-    roomNumber: opt.dataset.number,
-    typeName: opt.dataset.typename,
-    rate: rate
+    roomNumber: roomNumber,
+    typeName: typeName,
+    rate: rate,
+    roomTypeId: selectedTypeId
   });
 
   renderSelectedRooms();
@@ -558,11 +582,12 @@ checkinDate.addEventListener('change', function () {
   if (checkoutDate.value < this.value) {
     checkoutDate.value = this.value;
   }
-  fetchAvailableRooms();
+  // Re-filter dropdown with current static list (no AJAX needed)
+  updateAvailableRoomDropdown();
 });
 
 checkoutDate.addEventListener('change', function () {
-  fetchAvailableRooms();
+  updateAvailableRoomDropdown();
 });
 
 taxPercentInput.addEventListener('input', recalcSummary);
@@ -570,9 +595,15 @@ commissionPercent.addEventListener('input', recalcCommission);
 
 document.getElementById('advanceForm').addEventListener('submit', function (e) {
   if (selectedRoomsMap.size === 0) {
-    e.preventDefault();
-    alert('Please select and add at least one room to the reservation before saving.');
-    return false;
+    const selectedTypeId = roomTypeSelect.value;
+    if (selectedTypeId) {
+      // Auto-add room type reservation if user didn't explicitly click "Add Room"
+      addRoomBtn.click();
+    } else {
+      e.preventDefault();
+      alert('Please select a Room Type for the reservation before saving.');
+      return false;
+    }
   }
 });
 
@@ -644,8 +675,8 @@ function toggleCorporateFields() {
   });
 })();
 
-// Fetch initial rooms on load
-fetchAvailableRooms();
+// Rooms already embedded in AVAILABLE_ROOMS — no fetch needed on load
+
 </script>
 
 <?php require __DIR__ . '/includes/layout_bottom.php'; ?>

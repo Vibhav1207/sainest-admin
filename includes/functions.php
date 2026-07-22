@@ -372,12 +372,56 @@ function ensureExtraAmountColumnExists(): void {
     ensureCorporateBookingColumnsExist();
     ensureUpdatedAtColumnExists();
     ensureBookingExtraChargesTableExists();
+    ensureNullableRoomId();
 
     try {
         $pdo = db();
         $stmt = $pdo->query("SHOW COLUMNS FROM bookings LIKE 'extra_amount'");
         if (!$stmt->fetch()) {
             $pdo->exec("ALTER TABLE bookings ADD COLUMN extra_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER advance_amount");
+        }
+    } catch (Throwable $e) {
+        // Silently ignore if DB is not initialized yet
+    }
+}
+
+/**
+ * Ensures bookings.room_id and booking_rooms.room_id can be NULL to support unassigned room reservations.
+ */
+function ensureNullableRoomId(): void {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+
+    try {
+        $pdo = db();
+        $col = $pdo->query("SHOW COLUMNS FROM bookings LIKE 'room_id'")->fetch();
+        if ($col && strtolower($col['Null']) === 'no') {
+            try {
+                $pdo->exec("ALTER TABLE bookings MODIFY COLUMN room_id INT UNSIGNED NULL DEFAULT NULL");
+            } catch (Throwable $e) {
+                try {
+                    $pdo->exec("ALTER TABLE bookings DROP FOREIGN KEY fk_booking_room");
+                } catch (Throwable $e2) {}
+                $pdo->exec("ALTER TABLE bookings MODIFY COLUMN room_id INT UNSIGNED NULL DEFAULT NULL");
+                try {
+                    $pdo->exec("ALTER TABLE bookings ADD CONSTRAINT fk_booking_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL");
+                } catch (Throwable $e2) {}
+            }
+        }
+        $brCol = $pdo->query("SHOW COLUMNS FROM booking_rooms LIKE 'room_id'")->fetch();
+        if ($brCol && strtolower($brCol['Null']) === 'no') {
+            try {
+                $pdo->exec("ALTER TABLE booking_rooms MODIFY COLUMN room_id INT UNSIGNED NULL DEFAULT NULL");
+            } catch (Throwable $e) {
+                try {
+                    $pdo->exec("ALTER TABLE booking_rooms DROP FOREIGN KEY fk_br_room");
+                } catch (Throwable $e2) {}
+                $pdo->exec("ALTER TABLE booking_rooms MODIFY COLUMN room_id INT UNSIGNED NULL DEFAULT NULL");
+                try {
+                    $pdo->exec("ALTER TABLE booking_rooms ADD CONSTRAINT fk_br_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL");
+                } catch (Throwable $e2) {}
+            }
         }
     } catch (Throwable $e) {
         // Silently ignore if DB is not initialized yet
@@ -527,12 +571,19 @@ function getBookingRooms(int $bookingId): array {
     ensureBookingRoomsTableExists();
     $pdo = db();
     $stmt = $pdo->prepare("
-        SELECT br.room_id, br.rate_per_night, r.room_number, r.floor, r.status AS room_status, rt.name AS room_type_name, rt.base_rate, rt.max_guests
+        SELECT br.room_id, br.rate_per_night, 
+               COALESCE(r.room_number, 'Unassigned') AS room_number, 
+               COALESCE(r.floor, '—') AS floor, 
+               COALESCE(r.status, 'available') AS room_status, 
+               COALESCE(rt.name, 'Standard') AS room_type_name, 
+               COALESCE(rt.base_rate, br.rate_per_night) AS base_rate, 
+               COALESCE(rt.max_guests, 2) AS max_guests,
+               r.room_type_id AS room_type_id
         FROM booking_rooms br
-        JOIN rooms r ON r.id = br.room_id
-        JOIN room_types rt ON rt.id = r.room_type_id
+        LEFT JOIN rooms r ON r.id = br.room_id
+        LEFT JOIN room_types rt ON rt.id = r.room_type_id
         WHERE br.booking_id = :id
-        ORDER BY r.room_number ASC
+        ORDER BY CAST(r.room_number AS UNSIGNED) ASC
     ");
     $stmt->execute(['id' => $bookingId]);
     $rooms = $stmt->fetchAll();
@@ -540,10 +591,16 @@ function getBookingRooms(int $bookingId): array {
     // Fallback for legacy database rows if booking_rooms row was not created yet
     if (!$rooms) {
         $stmtLegacy = $pdo->prepare("
-            SELECT b.room_id, b.rate_per_night, r.room_number, r.floor, r.status AS room_status, rt.name AS room_type_name, rt.base_rate, rt.max_guests
+            SELECT b.room_id, b.rate_per_night, 
+                   COALESCE(r.room_number, 'Unassigned') AS room_number, 
+                   COALESCE(r.floor, '—') AS floor, 
+                   COALESCE(r.status, 'available') AS room_status, 
+                   COALESCE(rt.name, 'Standard') AS room_type_name, 
+                   COALESCE(rt.base_rate, b.rate_per_night) AS base_rate, 
+                   COALESCE(rt.max_guests, 2) AS max_guests
             FROM bookings b
-            JOIN rooms r ON r.id = b.room_id
-            JOIN room_types rt ON rt.id = r.room_type_id
+            LEFT JOIN rooms r ON r.id = b.room_id
+            LEFT JOIN room_types rt ON rt.id = r.room_type_id
             WHERE b.id = :id
         ");
         $stmtLegacy->execute(['id' => $bookingId]);
