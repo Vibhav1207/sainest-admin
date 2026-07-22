@@ -1,0 +1,3 @@
+# ID proof documents must only ever be served through doc_view.php
+# (which checks that the requester is a logged-in staff member).
+Require all denied

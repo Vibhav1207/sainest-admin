@@ -1,0 +1,18 @@
+# Hotel Sai Nest HMS — root .htaccess
+
+# Prevent direct download of the database schema / setup files
+<FilesMatch "\.(sql|md|log)$">
+  Require all denied
+</FilesMatch>
+
+# Basic security headers
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set X-XSS-Protection "1; mode=block"
+</IfModule>
+
+# Disable directory listing
+Options -Indexes
+
+php_flag display_errors off
