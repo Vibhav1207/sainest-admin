@@ -160,7 +160,7 @@ $byRoom = $roomStmt->fetchAll();
 // 8. Housekeeping status
 $hkStmt = db()->prepare("
   SELECT h.status, COUNT(*) cnt
-  FROM housekeeping h
+  FROM housekeeping_tasks h
   WHERE DATE(h.created_at) BETWEEN :f AND :t
   GROUP BY h.status
 ");

@@ -608,6 +608,34 @@ function updateAvailableRoomDropdown() {
   }
 }
 
+function getRoomOptionsHtml(roomTypeId, currentRoomId) {
+  if (!availableRoomsList || availableRoomsList.length === 0) {
+    return '<option value="">⏳ Loading rooms...</option>';
+  }
+  const filtered = availableRoomsList.filter(r => String(r.room_type_id) === String(roomTypeId));
+  let html = '<option value="">— UNASSIGNED —</option>';
+  const assignedRoomIds = Array.from(selectedRoomsMap.values()).map(r => r.roomId).filter(id => id > 0);
+
+  filtered.forEach(r => {
+    const isCurrent = parseInt(r.id) === parseInt(currentRoomId);
+    const isAssignedElsewhere = assignedRoomIds.includes(parseInt(r.id)) && !isCurrent;
+    let label = 'Room ' + r.room_number;
+    if (!r.is_available && !isCurrent) {
+      label += ' — ' + (r.conflict || r.status || 'Occupied');
+    }
+    if (isCurrent) label += ' — Current';
+    else if (isAssignedElsewhere) label += ' — Assigned to another row';
+    const disabled = (!r.is_available && !isCurrent) || isAssignedElsewhere;
+    const selected = isCurrent ? ' selected' : '';
+    html += '<option value="' + r.id + '"' + selected + (disabled ? ' disabled' : '') + '>' + escapeHtml(label) + '</option>';
+  });
+
+  if (filtered.length === 0) {
+    html += '<option value="" disabled>— No rooms found for this type —</option>';
+  }
+  return html;
+}
+
 function renderSelectedRooms() {
   const body = document.getElementById('selectedRoomsBody');
   const hiddenInputs = document.getElementById('selectedRoomsHiddenInputs');
@@ -626,9 +654,13 @@ function renderSelectedRooms() {
   selectedRoomsMap.forEach((room, key) => {
     totalRate += room.rate;
     const tr = document.createElement('tr');
-    const roomDisplay = room.roomId > 0 ? ('Room ' + escapeHtml(room.roomNumber)) : '<span class="badge badge-gray">Unassigned</span>';
+    const optionsHtml = getRoomOptionsHtml(room.roomTypeId, room.roomId);
     tr.innerHTML = `
-      <td><strong>${roomDisplay}</strong></td>
+      <td>
+        <select class="form-control form-control-sm row-room-select" data-key="${key}" style="min-width:180px;" onchange="onRowRoomChange('${key}', this.value)">
+          ${optionsHtml}
+        </select>
+      </td>
       <td>${escapeHtml(room.typeName)}</td>
       <td>
         <input type="number" class="form-control form-control-sm" style="max-width:140px; display:inline-block;" step="0.01" min="0" value="${room.rate}" onchange="updateRoomRate('${key}', this.value)">
@@ -643,6 +675,7 @@ function renderSelectedRooms() {
     inputRoom.type = 'hidden';
     inputRoom.name = 'room_ids[]';
     inputRoom.value = room.roomId || '';
+    inputRoom.id = 'hidden_room_' + key;
     hiddenInputs.appendChild(inputRoom);
 
     const inputRate = document.createElement('input');
@@ -660,6 +693,29 @@ function renderSelectedRooms() {
 
   totalRateInput.value = totalRate.toFixed(2);
   recalcCommission();
+}
+
+function onRowRoomChange(key, newRoomId) {
+  if (!selectedRoomsMap.has(key)) return;
+  const room = selectedRoomsMap.get(key);
+  const roomId = parseInt(newRoomId) || 0;
+
+  if (roomId > 0) {
+    const roomData = availableRoomsList.find(r => parseInt(r.id) === roomId);
+    if (roomData) {
+      room.roomId = roomId;
+      room.roomNumber = roomData.room_number;
+      room.rate = roomData.base_rate || room.rate;
+    }
+  } else {
+    room.roomId = 0;
+    room.roomNumber = 'Unassigned';
+  }
+
+  const hiddenInput = document.getElementById('hidden_room_' + key);
+  if (hiddenInput) hiddenInput.value = room.roomId || '';
+
+  renderSelectedRooms();
 }
 
 function updateRoomRate(key, newRate) {
@@ -777,7 +833,13 @@ function toggleAgentField() {
 toggleCorporateFields();
   toggleAgentField();
   renderSelectedRooms();
-  fetchAvailableRooms();
+
+  // Pre-select room type from existing booking rooms
+  if (INITIAL_ROOMS.length > 0 && INITIAL_ROOMS[0].roomTypeId) {
+    roomTypeSelect.value = String(INITIAL_ROOMS[0].roomTypeId);
+  }
+
+  fetchAvailableRooms(() => renderSelectedRooms());
 
 // ==================== EXTRA CHARGES JAVASCRIPT ====================
 const extraChargePresetSelect = document.getElementById('extraChargePresetSelect');

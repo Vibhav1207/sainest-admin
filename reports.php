@@ -582,65 +582,87 @@ function shareReport(channel) {
       ? document.getElementById('reportTypeSelect').value : 'all';
     const periodLabel = d.period.label;
     const filters = d.filters;
-    const exportUrl = '<?= BASE_URL ?>/export_reports.php?' + new URLSearchParams(new FormData(document.getElementById('reportFilterForm'))).toString();
 
     const b  = t => '*' + t + '*';
     const hr = '━━━━━━━━━━━━━━━━━━━━━';
 
+    // Report type labels
+    const reportLabels = {
+      'all': 'Booking Report',
+      'bookings': 'Booking Report',
+      'guests': 'Guest Report',
+      'revenue': 'Revenue Report',
+      'occupancy': 'Occupancy Report',
+      'checkin': 'Check-In Report',
+      'checkout': 'Check-Out Report',
+      'reservations': 'Advance Booking Report'
+    };
+    const reportLabel = reportLabels[reportType] || 'Booking Report';
+
+    // Format date with arrow: 01-Jul-2026 → 14-Jul-2026
+    function fmtDate(dateStr) {
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      const day = parseInt(parts[2]);
+      const mon = months[parseInt(parts[1]) - 1];
+      const year = parts[0];
+      return day + '-' + mon + '-' + year;
+    }
+    const dateRange = fmtDate(d.period.from) + ' → ' + fmtDate(d.period.to);
+
     const lines = [];
 
     // Header
-    lines.push('🏨 *HOTEL SAI NEST* — Report Summary');
-    lines.push('📅 Period: ' + periodLabel);
-    if (filters) lines.push('🔎 Filters: ' + filters);
+    lines.push('🏨 *Hotel Sai Nest*');
+    lines.push('');
+    lines.push('📊 *' + reportLabel + '*');
+    lines.push('');
     lines.push(hr);
+    lines.push('');
 
-    // Booking Status
+    // Date Range
+    lines.push('📅 *Date Range:*');
+    lines.push(dateRange);
+    lines.push('');
+
+    // Booking Status Overview
     const sc = d.status_counts;
-    lines.push('📋 *Booking Status Overview*');
-    lines.push('  🔹 Reserved:     ' + b(sc.reserved));
-    lines.push('  🛎️ Checked-In:  ' + b(sc.checked_in));
-    lines.push('  🚪 Checked-Out: ' + b(sc.checked_out));
-    lines.push('  ❌ Cancelled:   ' + b(sc.cancelled));
-    lines.push('  📊 Total Bookings: ' + b(d.revenue.booking_count));
+    lines.push('📌 *Total Bookings:* ' + b(d.revenue.booking_count));
+    lines.push('🟢 *Checked-In:* ' + b(sc.checked_in));
+    lines.push('🔵 *Reserved:* ' + b(sc.reserved));
+    lines.push('⚪ *Checked-Out:* ' + b(sc.checked_out));
+    lines.push('🔴 *Cancelled:* ' + b(sc.cancelled));
     lines.push('');
 
     // Room Occupancy
-    const occPct = d.total_rooms > 0 ? Math.round((d.occupied_rooms / d.total_rooms) * 100) : 0;
-    lines.push('🏨 *Room Occupancy*');
-    lines.push('  🛏️ Total Rooms:  ' + b(d.total_rooms));
-    lines.push('  ✅ Occupied:     ' + b(d.occupied_rooms));
-    lines.push('  📈 Occupancy Rate: ' + b(occPct + '%'));
+    const availRooms = d.total_rooms - d.occupied_rooms;
+    lines.push('🏠 *Rooms Occupied:* ' + b(d.occupied_rooms));
+    lines.push('🛏 *Available Rooms:* ' + b(availRooms));
     lines.push('');
 
     // Revenue
-    lines.push('💰 *Revenue Summary*');
-    lines.push('  💵 Total Revenue:    ' + b(d.revenue.total));
-    lines.push('  ✅ Total Collected:  ' + b(d.revenue.paid));
-    lines.push('  ⚠️ Outstanding Due:  ' + b(d.revenue.balance));
-    lines.push('  🧾 Total Invoices:   ' + b(d.revenue.invoice_count));
+    lines.push('💰 *Total Revenue:* ' + b(d.revenue.total));
     lines.push('');
 
-    // Guests
-    lines.push('👤 *Guest Summary*');
-    lines.push('  👥 Total Guests:     ' + b(d.guests.total));
-    lines.push('  🏢 Corporate:        ' + b(d.guests.corporate));
-    lines.push('  👤 Regular:          ' + b(d.guests.regular));
-    lines.push('');
-
-    // Report-type specific sections
+    // Report-type specific details
     if (reportType === 'bookings' || reportType === 'all') {
       if (d.by_source.length > 0) {
         lines.push('📊 *Bookings by Source*');
         d.by_source.forEach(s => {
           const srcName = s.booking_source.replace(/_/g, ' ').toUpperCase();
-          lines.push('  • ' + srcName + ': ' + b(s.c) + ' bookings' + (parseFloat(s.commission) > 0 ? ' (Comm: ₹' + parseFloat(s.commission).toFixed(2) + ')' : ''));
+          lines.push('  • ' + srcName + ': ' + b(s.c) + (parseFloat(s.commission) > 0 ? ' (Comm: ₹' + parseFloat(s.commission).toFixed(2) + ')' : ''));
         });
         lines.push('');
       }
     }
 
     if (reportType === 'revenue' || reportType === 'all') {
+      lines.push('💰 *Revenue Details*');
+      lines.push('  • Total Collected: ' + b(d.revenue.paid));
+      lines.push('  • Outstanding Due: ' + b(d.revenue.balance));
+      lines.push('  • Invoices Generated: ' + b(d.revenue.invoice_count));
+      lines.push('');
       if (d.by_room.length > 0) {
         lines.push('💰 *Revenue by Room*');
         d.by_room.forEach(r => {
@@ -654,46 +676,47 @@ function shareReport(channel) {
 
     if (reportType === 'checkin') {
       lines.push('🛎️ *Check-In Report*');
-      lines.push('  ✅ Guests Currently Checked-In: ' + b(sc.checked_in));
-      lines.push('  🛏️ Rooms Occupied: ' + b(d.occupied_rooms) + ' of ' + b(d.total_rooms));
+      lines.push('  • Guests Currently Checked-In: ' + b(sc.checked_in));
+      lines.push('  • Rooms Occupied: ' + b(d.occupied_rooms) + ' of ' + b(d.total_rooms));
       lines.push('');
     }
 
     if (reportType === 'checkout') {
       lines.push('🚪 *Check-Out Report*');
-      lines.push('  📤 Total Check-Outs: ' + b(sc.checked_out));
-      lines.push('  🛏️ Rooms Now Available: ' + b(d.total_rooms - d.occupied_rooms));
+      lines.push('  • Total Check-Outs: ' + b(sc.checked_out));
+      lines.push('  • Rooms Now Available: ' + b(availRooms));
       lines.push('');
     }
 
     if (reportType === 'reservations') {
       lines.push('📅 *Advance Booking Report*');
-      lines.push('  📋 Upcoming Reservations: ' + b(sc.reserved));
-      lines.push('  🏢 Corporate Reservations: ' + b(d.guests.corporate));
+      lines.push('  • Upcoming Reservations: ' + b(sc.reserved));
+      lines.push('  • Corporate Reservations: ' + b(d.guests.corporate));
       lines.push('');
     }
 
     if (reportType === 'guests') {
       lines.push('👤 *Guest Report*');
-      lines.push('  👥 Total Unique Guests: ' + b(d.guests.total));
-      lines.push('  🏢 Corporate Guests: ' + b(d.guests.corporate));
-      lines.push('  👤 Regular Guests: ' + b(d.guests.regular));
+      lines.push('  • Total Unique Guests: ' + b(d.guests.total));
+      lines.push('  • Corporate Guests: ' + b(d.guests.corporate));
+      lines.push('  • Regular Guests: ' + b(d.guests.regular));
       if (d.guests.total > 0) {
         const corpPct = Math.round((d.guests.corporate / d.guests.total) * 100);
-        lines.push('  📊 Corporate Mix: ' + b(corpPct + '%'));
+        lines.push('  • Corporate Mix: ' + b(corpPct + '%'));
       }
       lines.push('');
     }
 
     if (reportType === 'occupancy') {
+      const occPct = d.total_rooms > 0 ? Math.round((d.occupied_rooms / d.total_rooms) * 100) : 0;
       lines.push('🏨 *Room Occupancy Detail*');
-      lines.push('  🛏️ Total Rooms:  ' + b(d.total_rooms));
-      lines.push('  ✅ Occupied:     ' + b(d.occupied_rooms));
-      lines.push('  🟢 Available:    ' + b(d.total_rooms - d.occupied_rooms));
-      lines.push('  📈 Occupancy:    ' + b(occPct + '%'));
+      lines.push('  • Total Rooms: ' + b(d.total_rooms));
+      lines.push('  • Occupied: ' + b(d.occupied_rooms));
+      lines.push('  • Available: ' + b(availRooms));
+      lines.push('  • Occupancy Rate: ' + b(occPct + '%'));
       if (d.by_room.length > 0) {
         lines.push('');
-        lines.push('  *Room-wise Revenue:*');
+        lines.push('  *Room-wise Occupancy:*');
         d.by_room.slice(0, 10).forEach(r => {
           lines.push('    • Room ' + r.room_number + ' (' + r.room_type_name + '): ' + b('₹' + parseFloat(r.revenue).toFixed(2)));
         });
@@ -705,24 +728,38 @@ function shareReport(channel) {
     const hk = d.housekeeping;
     if (hk.pending > 0 || hk.in_progress > 0 || hk.completed > 0) {
       lines.push('🧹 *Housekeeping Status*');
-      lines.push('  ⏳ Pending:     ' + b(hk.pending));
-      lines.push('  🔄 In Progress: ' + b(hk.in_progress));
-      lines.push('  ✅ Completed:   ' + b(hk.completed));
+      lines.push('  • Pending: ' + b(hk.pending));
+      lines.push('  • In Progress: ' + b(hk.in_progress));
+      lines.push('  • Completed: ' + b(hk.completed));
+      lines.push('');
+    }
+
+    // Filters Section
+    if (filters) {
+      lines.push(hr);
+      lines.push('');
+      lines.push('🔎 *Applied Filters*');
+      lines.push('');
+      // Split filter string by pipe and format as bullets
+      const filterParts = filters.split('|').map(f => f.trim()).filter(Boolean);
+      filterParts.forEach(f => {
+        lines.push('• ' + f);
+      });
       lines.push('');
     }
 
     // Footer
     lines.push(hr);
-    lines.push('📊 Full Excel Report: ' + exportUrl);
     lines.push('');
-    lines.push('🤖 _Sent from Hotel Sai Nest HMS_');
+    lines.push('Generated from');
+    lines.push('*Hotel Sai Nest Management System*');
 
     const message = lines.join('\n');
 
     if (channel === 'whatsapp') {
       window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(message), '_blank');
     } else if (channel === 'email') {
-      const subject = encodeURIComponent('Hotel Sai Nest — ' + reportType.charAt(0).toUpperCase() + reportType.slice(1) + ' Report (' + periodLabel + ')');
+      const subject = encodeURIComponent('Hotel Sai Nest — ' + reportLabel + ' (' + periodLabel + ')');
       window.location.href = 'mailto:?subject=' + subject + '&body=' + encodeURIComponent(message);
     }
   }

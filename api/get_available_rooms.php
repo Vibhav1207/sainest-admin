@@ -2,7 +2,8 @@
 header('Content-Type: application/json');
 require_once __DIR__ . '/../includes/auth.php';
 
-if (!isLoggedIn()) {
+if (session_status() === PHP_SESSION_NONE) session_start();
+if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
