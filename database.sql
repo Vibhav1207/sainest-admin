@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS `bookings` (
   `rate_per_night` DECIMAL(10,2) NOT NULL DEFAULT 0,
   `advance_amount` DECIMAL(10,2) NOT NULL DEFAULT 0,
   `extra_amount` DECIMAL(10,2) NOT NULL DEFAULT 0,
-  `booking_source` ENUM('walk_in','phone','online','agent','ota_mmt','ota_goibibo','ota_booking_com','ota_other','other') NOT NULL DEFAULT 'walk_in',
+  `booking_source` ENUM('walk_in','phone','online','agent','ota_mmt','ota_goibibo','ota_booking_com','ota_other','clear_trip','other') NOT NULL DEFAULT 'walk_in',
   `agent_or_ota_name` VARCHAR(120) DEFAULT NULL,
   `commission_percent` DECIMAL(5,2) NOT NULL DEFAULT 0 COMMENT 'Internal only — never printed on guest invoice',
   `commission_amount` DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT 'Internal only — never printed on guest invoice',

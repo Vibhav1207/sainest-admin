@@ -36,8 +36,9 @@ require __DIR__ . '/includes/layout_top.php';
     <button type="button" id="mainExportBtn" class="btn btn-gold" onclick="exportToExcel('all')" style="gap:6px; display:inline-flex; align-items:center;">
       <span class="export-icon">📊</span> <span class="export-text">Export Filtered Data to Excel</span>
     </button>
-    <button type="button" class="btn btn-outline" onclick="shareReport('whatsapp')" style="gap:6px; display:inline-flex; align-items:center; background:#25D366; color:#fff; border-color:#25D366; font-weight:600;">
-      <span>📱</span> <span>Share to WhatsApp</span>
+    <button type="button" class="btn btn-whatsapp" onclick="shareReport('whatsapp')" title="Share report summary via WhatsApp">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:4px; vertical-align:middle;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+      <span>Share to WhatsApp</span>
     </button>
     <button type="button" class="btn btn-outline" onclick="shareReport('email')" style="gap:6px; display:inline-flex; align-items:center; font-weight:600;">
       <span>✉️</span> <span>Share via Email</span>
@@ -316,6 +317,40 @@ require __DIR__ . '/includes/layout_top.php';
 .mobile-filter-toggle {
   display: none;
 }
+/* ---- WhatsApp Button ---- */
+.btn-whatsapp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  background: #25D366;
+  color: #fff;
+  border: 2px solid #25D366;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+  line-height: 1.4;
+}
+.btn-whatsapp:hover {
+  background: #1ebe5b;
+  border-color: #1ebe5b;
+  box-shadow: 0 4px 14px rgba(37, 211, 102, 0.35);
+  transform: translateY(-1px);
+}
+.btn-whatsapp:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+.btn-whatsapp:disabled {
+  background: #94d3a2;
+  border-color: #94d3a2;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 @media (max-width: 768px) {
   .mobile-filter-toggle {
     display: block;
@@ -375,6 +410,9 @@ function toggleFilterDrawer() {
   icon.textContent = card.classList.contains('open') ? '▲' : '▼';
 }
 
+// Store WhatsApp report data globally
+window._waReportData = null;
+
 function applyFilters(e) {
   if (e) e.preventDefault();
   const form = document.getElementById('reportFilterForm');
@@ -386,6 +424,7 @@ function applyFilters(e) {
   applyBtn.innerHTML = '⏳ Applying...';
   applyBtn.disabled = true;
 
+  // Fetch main report data
   fetch(`<?= BASE_URL ?>/api/get_reports_data.php?${params}`)
     .then(res => res.json())
     .then(data => {
@@ -474,6 +513,12 @@ function applyFilters(e) {
           `;
         }).join('');
       }
+
+      // Fetch WhatsApp-specific data in background
+      fetch(`<?= BASE_URL ?>/api/whatsapp_report_data.php?${params}`)
+        .then(r => r.json())
+        .then(waData => { if (waData.success) window._waReportData = waData; })
+        .catch(() => {});
     })
     .catch(err => {
       applyBtn.innerHTML = oldText;
@@ -516,44 +561,189 @@ function exportToExcel(category = 'all') {
 }
 
 function shareReport(channel) {
-  // Build summary text from currently displayed KPIs
-  const totalRev   = document.getElementById('kpiTotRev')   ? document.getElementById('kpiTotRev').textContent   : '—';
-  const invCount   = document.getElementById('kpiInvCount') ? document.getElementById('kpiInvCount').textContent : '—';
-  const actualRev  = document.getElementById('kpiActualRev')  ? document.getElementById('kpiActualRev').textContent  : null;
-  const commPayable= document.getElementById('kpiCommPayable')? document.getElementById('kpiCommPayable').textContent: null;
+  // Show loading state on WhatsApp button
+  const waBtn = document.querySelector('.btn-whatsapp');
+  const origHTML = waBtn ? waBtn.innerHTML : '';
+  if (waBtn) {
+    waBtn.innerHTML = '<span>⏳</span> <span>Loading report...</span>';
+    waBtn.disabled = true;
+  }
 
-  // Build filter description
-  const preset     = document.getElementById('presetSelect')   ? document.getElementById('presetSelect').options[document.getElementById('presetSelect').selectedIndex].text : '';
-  const fromDate   = document.getElementById('fromDate')       ? document.getElementById('fromDate').value   : '';
-  const toDate     = document.getElementById('toDate')         ? document.getElementById('toDate').value     : '';
-  const periodText = preset ? preset.replace(/[^a-zA-Z0-9\s]/g,'').trim() : (fromDate + ' to ' + toDate);
+  function buildAndShare(d) {
+    // Restore button
+    if (waBtn) { waBtn.innerHTML = origHTML; waBtn.disabled = false; }
 
-  // Build export link with current filters
-  const form   = document.getElementById('reportFilterForm');
-  const params = new URLSearchParams(new FormData(form)).toString();
-  const exportUrl = `<?= BASE_URL ?>/export_reports.php?${params}`;
+    if (!d || !d.success) {
+      alert('Could not load report data. Please try again.');
+      return;
+    }
 
-  const lines = [
-    '🏨 Hotel Sai Nest — Report Summary',
-    '📅 Period: ' + periodText,
-    '─────────────────────────',
-    '💰 Total Revenue: ' + totalRev,
-    '🧾 Invoices Generated: ' + invCount,
-  ];
-  if (actualRev)   lines.push('🏨 Actual Room Revenue: ' + actualRev);
-  if (commPayable) lines.push('🤝 Commission Payable: ' + commPayable);
-  lines.push('─────────────────────────');
-  lines.push('📊 Download Excel Report: ' + exportUrl);
+    const reportType = document.getElementById('reportTypeSelect')
+      ? document.getElementById('reportTypeSelect').value : 'all';
+    const periodLabel = d.period.label;
+    const filters = d.filters;
+    const exportUrl = '<?= BASE_URL ?>/export_reports.php?' + new URLSearchParams(new FormData(document.getElementById('reportFilterForm'))).toString();
 
-  const message = lines.join('\n');
+    const b  = t => '*' + t + '*';
+    const hr = '━━━━━━━━━━━━━━━━━━━━━';
 
-  if (channel === 'whatsapp') {
-    const waUrl = 'https://api.whatsapp.com/send?text=' + encodeURIComponent(message);
-    window.open(waUrl, '_blank');
-  } else if (channel === 'email') {
-    const subject = encodeURIComponent('Hotel Sai Nest — Report Summary (' + periodText + ')');
-    const body    = encodeURIComponent(message);
-    window.location.href = 'mailto:?subject=' + subject + '&body=' + body;
+    const lines = [];
+
+    // Header
+    lines.push('🏨 *HOTEL SAI NEST* — Report Summary');
+    lines.push('📅 Period: ' + periodLabel);
+    if (filters) lines.push('🔎 Filters: ' + filters);
+    lines.push(hr);
+
+    // Booking Status
+    const sc = d.status_counts;
+    lines.push('📋 *Booking Status Overview*');
+    lines.push('  🔹 Reserved:     ' + b(sc.reserved));
+    lines.push('  🛎️ Checked-In:  ' + b(sc.checked_in));
+    lines.push('  🚪 Checked-Out: ' + b(sc.checked_out));
+    lines.push('  ❌ Cancelled:   ' + b(sc.cancelled));
+    lines.push('  📊 Total Bookings: ' + b(d.revenue.booking_count));
+    lines.push('');
+
+    // Room Occupancy
+    const occPct = d.total_rooms > 0 ? Math.round((d.occupied_rooms / d.total_rooms) * 100) : 0;
+    lines.push('🏨 *Room Occupancy*');
+    lines.push('  🛏️ Total Rooms:  ' + b(d.total_rooms));
+    lines.push('  ✅ Occupied:     ' + b(d.occupied_rooms));
+    lines.push('  📈 Occupancy Rate: ' + b(occPct + '%'));
+    lines.push('');
+
+    // Revenue
+    lines.push('💰 *Revenue Summary*');
+    lines.push('  💵 Total Revenue:    ' + b(d.revenue.total));
+    lines.push('  ✅ Total Collected:  ' + b(d.revenue.paid));
+    lines.push('  ⚠️ Outstanding Due:  ' + b(d.revenue.balance));
+    lines.push('  🧾 Total Invoices:   ' + b(d.revenue.invoice_count));
+    lines.push('');
+
+    // Guests
+    lines.push('👤 *Guest Summary*');
+    lines.push('  👥 Total Guests:     ' + b(d.guests.total));
+    lines.push('  🏢 Corporate:        ' + b(d.guests.corporate));
+    lines.push('  👤 Regular:          ' + b(d.guests.regular));
+    lines.push('');
+
+    // Report-type specific sections
+    if (reportType === 'bookings' || reportType === 'all') {
+      if (d.by_source.length > 0) {
+        lines.push('📊 *Bookings by Source*');
+        d.by_source.forEach(s => {
+          const srcName = s.booking_source.replace(/_/g, ' ').toUpperCase();
+          lines.push('  • ' + srcName + ': ' + b(s.c) + ' bookings' + (parseFloat(s.commission) > 0 ? ' (Comm: ₹' + parseFloat(s.commission).toFixed(2) + ')' : ''));
+        });
+        lines.push('');
+      }
+    }
+
+    if (reportType === 'revenue' || reportType === 'all') {
+      if (d.by_room.length > 0) {
+        lines.push('💰 *Revenue by Room*');
+        d.by_room.forEach(r => {
+          if (parseFloat(r.revenue) > 0) {
+            lines.push('  • Room ' + r.room_number + ' (' + r.room_type_name + '): ' + b('₹' + parseFloat(r.revenue).toFixed(2)));
+          }
+        });
+        lines.push('');
+      }
+    }
+
+    if (reportType === 'checkin') {
+      lines.push('🛎️ *Check-In Report*');
+      lines.push('  ✅ Guests Currently Checked-In: ' + b(sc.checked_in));
+      lines.push('  🛏️ Rooms Occupied: ' + b(d.occupied_rooms) + ' of ' + b(d.total_rooms));
+      lines.push('');
+    }
+
+    if (reportType === 'checkout') {
+      lines.push('🚪 *Check-Out Report*');
+      lines.push('  📤 Total Check-Outs: ' + b(sc.checked_out));
+      lines.push('  🛏️ Rooms Now Available: ' + b(d.total_rooms - d.occupied_rooms));
+      lines.push('');
+    }
+
+    if (reportType === 'reservations') {
+      lines.push('📅 *Advance Booking Report*');
+      lines.push('  📋 Upcoming Reservations: ' + b(sc.reserved));
+      lines.push('  🏢 Corporate Reservations: ' + b(d.guests.corporate));
+      lines.push('');
+    }
+
+    if (reportType === 'guests') {
+      lines.push('👤 *Guest Report*');
+      lines.push('  👥 Total Unique Guests: ' + b(d.guests.total));
+      lines.push('  🏢 Corporate Guests: ' + b(d.guests.corporate));
+      lines.push('  👤 Regular Guests: ' + b(d.guests.regular));
+      if (d.guests.total > 0) {
+        const corpPct = Math.round((d.guests.corporate / d.guests.total) * 100);
+        lines.push('  📊 Corporate Mix: ' + b(corpPct + '%'));
+      }
+      lines.push('');
+    }
+
+    if (reportType === 'occupancy') {
+      lines.push('🏨 *Room Occupancy Detail*');
+      lines.push('  🛏️ Total Rooms:  ' + b(d.total_rooms));
+      lines.push('  ✅ Occupied:     ' + b(d.occupied_rooms));
+      lines.push('  🟢 Available:    ' + b(d.total_rooms - d.occupied_rooms));
+      lines.push('  📈 Occupancy:    ' + b(occPct + '%'));
+      if (d.by_room.length > 0) {
+        lines.push('');
+        lines.push('  *Room-wise Revenue:*');
+        d.by_room.slice(0, 10).forEach(r => {
+          lines.push('    • Room ' + r.room_number + ' (' + r.room_type_name + '): ' + b('₹' + parseFloat(r.revenue).toFixed(2)));
+        });
+      }
+      lines.push('');
+    }
+
+    // Housekeeping
+    const hk = d.housekeeping;
+    if (hk.pending > 0 || hk.in_progress > 0 || hk.completed > 0) {
+      lines.push('🧹 *Housekeeping Status*');
+      lines.push('  ⏳ Pending:     ' + b(hk.pending));
+      lines.push('  🔄 In Progress: ' + b(hk.in_progress));
+      lines.push('  ✅ Completed:   ' + b(hk.completed));
+      lines.push('');
+    }
+
+    // Footer
+    lines.push(hr);
+    lines.push('📊 Full Excel Report: ' + exportUrl);
+    lines.push('');
+    lines.push('🤖 _Sent from Hotel Sai Nest HMS_');
+
+    const message = lines.join('\n');
+
+    if (channel === 'whatsapp') {
+      window.open('https://api.whatsapp.com/send?text=' + encodeURIComponent(message), '_blank');
+    } else if (channel === 'email') {
+      const subject = encodeURIComponent('Hotel Sai Nest — ' + reportType.charAt(0).toUpperCase() + reportType.slice(1) + ' Report (' + periodLabel + ')');
+      window.location.href = 'mailto:?subject=' + subject + '&body=' + encodeURIComponent(message);
+    }
+  }
+
+  // Use cached data if available, otherwise fetch fresh
+  if (window._waReportData) {
+    buildAndShare(window._waReportData);
+  } else {
+    const form = document.getElementById('reportFilterForm');
+    const params = new URLSearchParams(new FormData(form)).toString();
+    fetch('<?= BASE_URL ?>/api/whatsapp_report_data.php?' + params)
+      .then(r => r.json())
+      .then(d => {
+        window._waReportData = d;
+        buildAndShare(d);
+      })
+      .catch(err => {
+        if (waBtn) { waBtn.innerHTML = origHTML; waBtn.disabled = false; }
+        console.error('WhatsApp data fetch error:', err);
+        alert('Failed to load report data. Please check your connection and try again.');
+      });
   }
 }
 

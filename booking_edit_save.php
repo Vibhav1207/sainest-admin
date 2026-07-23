@@ -88,9 +88,6 @@ try {
         }
         $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate, 'room_type_id' => $legacyRoomTypeId];
     }
-        $legacyRate   = (float) ($_POST['rate_per_night'] ?? 0);
-        $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate];
-    }
 
     if (empty($selectedRooms)) {
         throw new RuntimeException('At least one room or room type must be selected.');
