@@ -5,7 +5,7 @@ requireRole(['admin', 'manager', 'frontdesk']);
 $bookingId = (int) ($_GET['id'] ?? 0);
 
 $stmt = db()->prepare("
-  SELECT b.*, COALESCE(r.room_number, 'Unassigned') AS room_number, COALESCE(r.status, 'available') AS room_status, COALESCE(rt.name, 'Standard') AS room_type_name
+  SELECT b.*, COALESCE(r.room_number, 'Unassigned') AS room_number, COALESCE(r.status, 'available') AS room_status, COALESCE(rt.name, 'Unassigned') AS room_type_name
   FROM bookings b
   LEFT JOIN rooms r ON r.id = b.room_id
   LEFT JOIN room_types rt ON rt.id = r.room_type_id

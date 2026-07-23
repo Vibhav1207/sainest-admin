@@ -5,7 +5,7 @@ requireRole(['admin', 'manager', 'frontdesk']);
 $bookingId = (int) ($_GET['id'] ?? 0);
 
 $stmt = db()->prepare("
-  SELECT b.*, COALESCE(r.room_number, 'Unassigned') AS room_number, COALESCE(rt.name, 'Standard') AS room_type_name, u1.full_name AS created_by_name, u2.full_name AS checked_out_by_name
+  SELECT b.*, COALESCE(r.room_number, 'Unassigned') AS room_number, COALESCE(rt.name, 'Unassigned') AS room_type_name, u1.full_name AS created_by_name, u2.full_name AS checked_out_by_name
   FROM bookings b
   LEFT JOIN rooms r ON r.id = b.room_id
   LEFT JOIN room_types rt ON rt.id = r.room_type_id
@@ -172,15 +172,16 @@ require __DIR__ . '/includes/layout_top.php';
   </div>
   <div class="table-wrap">
     <table class="data-table">
-      <thead>
+<thead>
         <tr>
-          <th>Date &amp; Time</th>
+          <th>Date & Time</th>
           <th>Charge Item</th>
           <th class="text-right">Qty</th>
           <th class="text-right">Unit Price (₹)</th>
           <th class="text-right">Total Amount (₹)</th>
           <th>Remarks</th>
           <th>Added By</th>
+          <th style="width:80px; text-align:right;">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -193,6 +194,10 @@ require __DIR__ . '/includes/layout_top.php';
             <td class="text-right"><strong><?= money((float)($ec['total_amount'] ?? 0)) ?></strong></td>
             <td class="text-muted"><?= e($ec['remarks'] ?: '—') ?></td>
             <td><?= e($ec['created_by_name'] ?? 'System') ?></td>
+            <td style="text-align:right;">
+              <button type="button" class="btn btn-sm btn-outline" onclick="editExtraChargeView(<?= (int)$ec['id'] ?>, '<?= e($ec['charge_name'], ENT_QUOTES) ?>', <?= (float)$ec['qty'] ?>, <?= (float)($ec['unit_price'] ?? 0) ?>, '<?= e($ec['remarks'] ?? '', ENT_QUOTES) ?>')" title="Edit">✏️</button>
+              <button type="button" class="btn btn-sm btn-red" onclick="deleteExtraChargeView(<?= (int)$ec['id'] ?>)" title="Delete">✕</button>
+            </td>
           </tr>
         <?php endforeach; ?>
       </tbody>
@@ -256,5 +261,36 @@ require __DIR__ . '/includes/layout_top.php';
 <?php if ($booking['special_requests']): ?>
 <div class="card"><div class="card-head"><h3>📝 Special Requests</h3></div><p><?= e($booking['special_requests']) ?></p></div>
 <?php endif; ?>
+
+<script>
+function editExtraChargeView(chargeId, name, qty, price, remarks) {
+  // Redirect to booking edit with the charge ID to edit
+  window.location.href = '<?= BASE_URL ?>/booking_edit.php?id=<?= $booking['id'] ?>&edit_charge=' + chargeId;
+}
+
+function deleteExtraChargeView(chargeId) {
+  if (!confirm('Delete this extra charge?')) return;
+  
+  fetch('<?= BASE_URL ?>/booking_extra_charge_delete.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'charge_id=' + chargeId + '&csrf_token=<?= e(csrfToken()) ?>'
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      window.location.reload();
+    } else {
+      alert('Failed to delete: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(err => {
+    console.error(err);
+    alert('Error deleting charge');
+  });
+}
+</script>
 
 <?php require __DIR__ . '/includes/layout_bottom.php'; ?>

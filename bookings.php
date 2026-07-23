@@ -101,7 +101,7 @@ require __DIR__ . '/includes/layout_top.php';
             <?php endif; ?>
           </td>
           <td class="nowrap"><?= e($b['guest_phone']) ?></td>
-          <td><strong>Room <?= e($b['room_number']) ?></strong></td>
+          <td><strong><?= $b['room_number'] !== 'Unassigned' ? 'Room ' . e($b['room_number']) : '<span class="badge badge-gray">Unassigned</span>' ?></strong></td>
           <td class="nowrap"><?= date('d M Y', strtotime($b['checkin_datetime'])) ?></td>
           <td class="nowrap"><?= $b['actual_checkout_datetime'] ? date('d M Y', strtotime($b['actual_checkout_datetime'])) : date('d M Y', strtotime($b['expected_checkout_date'])) . ' (exp.)' ?></td>
           <td>

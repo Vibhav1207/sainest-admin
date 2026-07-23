@@ -546,17 +546,41 @@ function ensureBookingRoomsTableExists(): void {
                 CREATE TABLE IF NOT EXISTS `booking_rooms` (
                   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
                   `booking_id` INT UNSIGNED NOT NULL,
-                  `room_id` INT UNSIGNED NOT NULL,
+                  `room_id` INT UNSIGNED DEFAULT NULL,
+                  `room_type_id` INT UNSIGNED DEFAULT NULL,
                   `rate_per_night` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
                   PRIMARY KEY (`id`),
                   KEY `fk_br_booking` (`booking_id`),
                   KEY `fk_br_room` (`room_id`),
+                  KEY `fk_br_room_type` (`room_type_id`),
                   CONSTRAINT `fk_br_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE CASCADE,
-                  CONSTRAINT `fk_br_room` FOREIGN KEY (`room_id`) REFERENCES `rooms` (`id`) ON DELETE CASCADE
+                  CONSTRAINT `fk_br_room` FOREIGN KEY (`room_id`) REFERENCES `rooms` (`id`) ON DELETE SET NULL,
+                  CONSTRAINT `fk_br_room_type` FOREIGN KEY (`room_type_id`) REFERENCES `room_types` (`id`) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-                INSERT INTO `booking_rooms` (`booking_id`, `room_id`, `rate_per_night`)
-                SELECT `id`, `room_id`, `rate_per_night` FROM `bookings`;
+                INSERT INTO `booking_rooms` (`booking_id`, `room_id`, `room_type_id`, `rate_per_night`)
+                SELECT b.`id`, b.`room_id`, r.`room_type_id`, b.`rate_per_night`
+                FROM `bookings` b
+                LEFT JOIN `rooms` r ON r.`id` = b.`room_id`;
+            ");
+        } else {
+            // Ensure room_type_id column exists
+            $col = $pdo->query("SHOW COLUMNS FROM `booking_rooms` LIKE 'room_type_id'")->fetch();
+            if (!$col) {
+                $pdo->exec("ALTER TABLE `booking_rooms` ADD COLUMN `room_type_id` INT UNSIGNED NULL DEFAULT NULL AFTER `room_id`");
+                try {
+                    $pdo->exec("ALTER TABLE `booking_rooms` ADD KEY `fk_br_room_type` (`room_type_id`)");
+                    $pdo->exec("ALTER TABLE `booking_rooms` ADD CONSTRAINT `fk_br_room_type` FOREIGN KEY (`room_type_id`) REFERENCES `room_types` (`id`) ON DELETE SET NULL");
+                } catch (Throwable $e2) {
+                    // Ignore key creation error if already exists
+                }
+            }
+            // Migrate existing rows: populate room_type_id from rooms where room_id is set
+            $pdo->exec("
+                UPDATE `booking_rooms` br
+                JOIN `rooms` r ON r.`id` = br.`room_id`
+                SET br.`room_type_id` = r.`room_type_id`
+                WHERE br.`room_id` IS NOT NULL AND br.`room_type_id` IS NULL
             ");
         }
     } catch (Throwable $e) {
@@ -571,19 +595,22 @@ function getBookingRooms(int $bookingId): array {
     ensureBookingRoomsTableExists();
     $pdo = db();
     $stmt = $pdo->prepare("
-        SELECT br.room_id, br.rate_per_night, 
+        SELECT br.id AS booking_room_id,
+               br.room_id,
+               br.room_type_id AS stored_room_type_id,
+               br.rate_per_night, 
                COALESCE(r.room_number, 'Unassigned') AS room_number, 
                COALESCE(r.floor, '—') AS floor, 
                COALESCE(r.status, 'available') AS room_status, 
-               COALESCE(rt.name, 'Standard') AS room_type_name, 
+               COALESCE(rt.name, 'Unassigned') AS room_type_name, 
                COALESCE(rt.base_rate, br.rate_per_night) AS base_rate, 
                COALESCE(rt.max_guests, 2) AS max_guests,
-               r.room_type_id AS room_type_id
+               COALESCE(r.room_type_id, br.room_type_id) AS room_type_id
         FROM booking_rooms br
         LEFT JOIN rooms r ON r.id = br.room_id
-        LEFT JOIN room_types rt ON rt.id = r.room_type_id
+        LEFT JOIN room_types rt ON rt.id = COALESCE(r.room_type_id, br.room_type_id)
         WHERE br.booking_id = :id
-        ORDER BY CAST(r.room_number AS UNSIGNED) ASC
+        ORDER BY CAST(r.room_number AS UNSIGNED) ASC, br.id ASC
     ");
     $stmt->execute(['id' => $bookingId]);
     $rooms = $stmt->fetchAll();
@@ -591,13 +618,17 @@ function getBookingRooms(int $bookingId): array {
     // Fallback for legacy database rows if booking_rooms row was not created yet
     if (!$rooms) {
         $stmtLegacy = $pdo->prepare("
-            SELECT b.room_id, b.rate_per_night, 
+            SELECT NULL AS booking_room_id,
+                   b.room_id,
+                   r.room_type_id AS stored_room_type_id,
+                   b.rate_per_night, 
                    COALESCE(r.room_number, 'Unassigned') AS room_number, 
                    COALESCE(r.floor, '—') AS floor, 
                    COALESCE(r.status, 'available') AS room_status, 
-                   COALESCE(rt.name, 'Standard') AS room_type_name, 
+                   COALESCE(rt.name, 'Unassigned') AS room_type_name, 
                    COALESCE(rt.base_rate, b.rate_per_night) AS base_rate, 
-                   COALESCE(rt.max_guests, 2) AS max_guests
+                   COALESCE(rt.max_guests, 2) AS max_guests,
+                   r.room_type_id AS room_type_id
             FROM bookings b
             LEFT JOIN rooms r ON r.id = b.room_id
             LEFT JOIN room_types rt ON rt.id = r.room_type_id
@@ -692,6 +723,76 @@ function addBookingExtraCharge(int $bookingId, string $chargeName, float $qty, f
     $updStmt->execute(['extra' => $newTotalExtra, 'b' => $bookingId]);
 
     return $chargeId;
+}
+
+/**
+ * Updates an existing extra charge and recalculates booking total.
+ */
+function updateBookingExtraCharge(int $chargeId, string $chargeName, float $qty, float $unitPrice, ?string $remarks = null): bool {
+    ensureBookingExtraChargesTableExists();
+    $pdo = db();
+    $totalAmount = round($qty * $unitPrice, 2);
+
+    $stmt = $pdo->prepare("
+        UPDATE booking_extra_charges 
+        SET charge_name = :name, qty = :qty, unit_price = :price, 
+            total_amount = :total, remarks = :remarks
+        WHERE id = :id
+    ");
+    $result = $stmt->execute([
+        'name'    => trim($chargeName),
+        'qty'     => $qty,
+        'price'   => $unitPrice,
+        'total'   => $totalAmount,
+        'remarks' => trim($remarks ?: '') ?: null,
+        'id'      => $chargeId,
+    ]);
+
+    if ($result) {
+        // Recalculate total extra charges for this booking and sync into bookings.extra_amount
+        $bookingStmt = $pdo->prepare("SELECT booking_id FROM booking_extra_charges WHERE id = :id");
+        $bookingStmt->execute(['id' => $chargeId]);
+        $bookingId = (int) $bookingStmt->fetchColumn();
+
+        if ($bookingId) {
+            $sumStmt = $pdo->prepare("SELECT COALESCE(SUM(total_amount), 0) FROM booking_extra_charges WHERE booking_id = :b");
+            $sumStmt->execute(['b' => $bookingId]);
+            $newTotalExtra = (float) $sumStmt->fetchColumn();
+
+            $updStmt = $pdo->prepare("UPDATE bookings SET extra_amount = :extra WHERE id = :b");
+            $updStmt->execute(['extra' => $newTotalExtra, 'b' => $bookingId]);
+        }
+    }
+
+    return $result;
+}
+
+/**
+ * Deletes an extra charge and recalculates booking total.
+ */
+function deleteBookingExtraCharge(int $chargeId): bool {
+    ensureBookingExtraChargesTableExists();
+    $pdo = db();
+
+    // Get booking_id before deleting
+    $bookingStmt = $pdo->prepare("SELECT booking_id FROM booking_extra_charges WHERE id = :id");
+    $bookingStmt->execute(['id' => $chargeId]);
+    $bookingId = (int) $bookingStmt->fetchColumn();
+
+    $stmt = $pdo->prepare("DELETE FROM booking_extra_charges WHERE id = :id");
+    $result = $stmt->execute(['id' => $chargeId]);
+
+    if ($result && $bookingId) {
+        // Recalculate total extra charges for this booking and sync into bookings.extra_amount
+        $sumStmt = $pdo->prepare("SELECT COALESCE(SUM(total_amount), 0) FROM booking_extra_charges WHERE booking_id = :b");
+        $sumStmt->execute(['b' => $bookingId]);
+        $newTotalExtra = (float) $sumStmt->fetchColumn();
+
+        $updStmt = $pdo->prepare("UPDATE bookings SET extra_amount = :extra WHERE id = :b");
+        $updStmt->execute(['extra' => $newTotalExtra, 'b' => $bookingId]);
+    }
+
+    return $result;
 }
 
 /**

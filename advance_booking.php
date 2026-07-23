@@ -11,7 +11,7 @@ $roomTypes = getRoomTypes();
 // Load all non-maintenance rooms server-side (same as checkin.php approach)
 $availableRooms = db()->query("
     SELECT r.id, r.room_number, r.room_type_id, r.status,
-           COALESCE(rt.name, 'Standard') AS type_name,
+           COALESCE(rt.name, 'Unassigned') AS type_name,
            COALESCE(rt.base_rate, 0)     AS base_rate,
            COALESCE(rt.max_guests, 2)    AS max_guests
     FROM rooms r

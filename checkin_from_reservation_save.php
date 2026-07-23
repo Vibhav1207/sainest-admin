@@ -229,10 +229,14 @@ try {
         $payStmt->execute(['b' => $bookingId, 'a' => $extraAdvance, 'u' => $_SESSION['user_id']]);
     }
 
-    // Mark ALL rooms for this booking as 'occupied'
+    // Mark ALL rooms for this booking as 'occupied' and sync room_type_id on booking_rooms
     $updRoom = $pdo->prepare("UPDATE rooms SET status = 'occupied' WHERE id = :id");
+    $updBrType = $pdo->prepare("UPDATE booking_rooms br JOIN rooms r ON r.id = br.room_id SET br.room_type_id = r.room_type_id WHERE br.booking_id = :bid AND br.room_id = :rid");
     foreach ($bookingRooms as $br) {
-        $updRoom->execute(['id' => $br['room_id']]);
+        if (!empty($br['room_id'])) {
+            $updRoom->execute(['id' => $br['room_id']]);
+            $updBrType->execute(['bid' => $bookingId, 'rid' => $br['room_id']]);
+        }
     }
 
     $roomsStr = implode(', ', $roomNumbersArr);

@@ -106,12 +106,13 @@ try {
     $roomStmt = $pdo->prepare("SELECT * FROM rooms WHERE id = :id FOR UPDATE");
     $totalNightlyRate = 0;
 
-    foreach ($selectedRooms as $sr) {
+    foreach ($selectedRooms as &$sr) {
         $roomStmt->execute(['id' => $sr['room_id']]);
         $room = $roomStmt->fetch();
         if (!$room) {
             throw new RuntimeException('Selected room ID ' . $sr['room_id'] . ' does not exist.');
         }
+        $sr['room_type_id'] = (int) $room['room_type_id'];
         if ($room['status'] === 'occupied') {
             throw new RuntimeException('Room ' . $room['room_number'] . ' was just occupied by another guest. Please choose a different room.');
         }
@@ -212,11 +213,11 @@ try {
     $bookingId = (int) $pdo->lastInsertId();
 
     // Insert all selected rooms into booking_rooms junction table and set occupied status
-    $brStmt = $pdo->prepare("INSERT INTO booking_rooms (booking_id, room_id, rate_per_night) VALUES (:b, :r, :rate)");
+    $brStmt = $pdo->prepare("INSERT INTO booking_rooms (booking_id, room_id, room_type_id, rate_per_night) VALUES (:b, :r, :rt, :rate)");
     $updRoomStmt = $pdo->prepare("UPDATE rooms SET status = 'occupied' WHERE id = :id");
 
     foreach ($selectedRooms as $sr) {
-        $brStmt->execute(['b' => $bookingId, 'r' => $sr['room_id'], 'rate' => $sr['rate']]);
+        $brStmt->execute(['b' => $bookingId, 'r' => $sr['room_id'], 'rt' => $sr['room_type_id'] ?? null, 'rate' => $sr['rate']]);
         $updRoomStmt->execute(['id' => $sr['room_id']]);
     }
 

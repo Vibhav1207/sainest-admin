@@ -22,7 +22,7 @@ try {
     // Fetch all non-maintenance rooms (LEFT JOIN so rooms without room_type_id are still included)
     $rooms = db()->query("
         SELECT r.*, 
-               COALESCE(rt.name, 'Standard') AS type_name, 
+               COALESCE(rt.name, 'Unassigned') AS type_name, 
                COALESCE(rt.base_rate, 0) AS base_rate, 
                COALESCE(rt.max_guests, 2) AS max_guests
         FROM rooms r

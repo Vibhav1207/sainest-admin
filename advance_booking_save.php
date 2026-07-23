@@ -10,23 +10,45 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !csrfCheck()) {
 $pdo = db();
 
 try {
-    $postRoomIds   = $_POST['room_ids'] ?? [];
-    $postRoomRates = $_POST['room_rates'] ?? [];
+    $postRoomIds     = $_POST['room_ids'] ?? [];
+    $postRoomRates   = $_POST['room_rates'] ?? [];
+    $postRoomTypeIds = $_POST['room_type_ids'] ?? [];
 
     $selectedRooms = [];
     if (!empty($postRoomIds) && is_array($postRoomIds)) {
         foreach ($postRoomIds as $idx => $rId) {
             $id = !empty($rId) ? (int) $rId : null;
             $rate = (float) ($postRoomRates[$idx] ?? 0);
-            $selectedRooms[] = ['room_id' => $id, 'rate' => $rate];
+            $rtId = !empty($postRoomTypeIds[$idx]) ? (int) $postRoomTypeIds[$idx] : null;
+
+            // If room_id is set but room_type_id was not passed, fetch room's room_type_id
+            if ($id !== null && $rtId === null) {
+                $rStmt = $pdo->prepare("SELECT room_type_id FROM rooms WHERE id = :id");
+                $rStmt->execute(['id' => $id]);
+                $rRow = $rStmt->fetch();
+                if ($rRow) {
+                    $rtId = (int) $rRow['room_type_id'];
+                }
+            }
+
+            $selectedRooms[] = ['room_id' => $id, 'rate' => $rate, 'room_type_id' => $rtId];
         }
     }
 
     // Fallback for single-room submissions if any
     if (empty($selectedRooms)) {
-        $legacyRoomId = !empty($_POST['room_id']) ? (int) $_POST['room_id'] : null;
-        $legacyRate   = (float) ($_POST['rate_per_night'] ?? 0);
-        $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate];
+        $legacyRoomId     = !empty($_POST['room_id']) ? (int) $_POST['room_id'] : null;
+        $legacyRate       = (float) ($_POST['rate_per_night'] ?? 0);
+        $legacyRoomTypeId = !empty($_POST['room_type_id']) ? (int) $_POST['room_type_id'] : null;
+        if ($legacyRoomId !== null && $legacyRoomTypeId === null) {
+            $rStmt = $pdo->prepare("SELECT room_type_id FROM rooms WHERE id = :id");
+            $rStmt->execute(['id' => $legacyRoomId]);
+            $rRow = $rStmt->fetch();
+            if ($rRow) {
+                $legacyRoomTypeId = (int) $rRow['room_type_id'];
+            }
+        }
+        $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate, 'room_type_id' => $legacyRoomTypeId];
     }
 
     $checkinDate      = $_POST['checkin_date'] ?? '';
@@ -204,9 +226,9 @@ try {
     $bookingId = (int) $pdo->lastInsertId();
 
     // Insert all selected rooms into booking_rooms junction table
-    $brStmt = $pdo->prepare("INSERT INTO booking_rooms (booking_id, room_id, rate_per_night) VALUES (:b, :r, :rate)");
+    $brStmt = $pdo->prepare("INSERT INTO booking_rooms (booking_id, room_id, room_type_id, rate_per_night) VALUES (:b, :r, :rt, :rate)");
     foreach ($selectedRooms as $sr) {
-        $brStmt->execute(['b' => $bookingId, 'r' => $sr['room_id'], 'rate' => $sr['rate']]);
+        $brStmt->execute(['b' => $bookingId, 'r' => $sr['room_id'], 'rt' => $sr['room_type_id'], 'rate' => $sr['rate']]);
     }
 
     $pdo->prepare("INSERT INTO booking_guests (booking_id, guest_id, is_primary) VALUES (:b, :g, 1)")

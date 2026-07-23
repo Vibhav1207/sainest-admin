@@ -48,21 +48,46 @@ try {
     $oldRoomIds = array_map(fn($r) => (int)$r['room_id'], $oldBookingRooms);
 
     // ---- Parse POST rooms ----
-    $postRoomIds   = $_POST['room_ids'] ?? [];
-    $postRoomRates = $_POST['room_rates'] ?? [];
+    $postRoomIds     = $_POST['room_ids'] ?? [];
+    $postRoomRates   = $_POST['room_rates'] ?? [];
+    $postRoomTypeIds = $_POST['room_type_ids'] ?? [];
 
     $selectedRooms = [];
     if (!empty($postRoomIds) && is_array($postRoomIds)) {
         foreach ($postRoomIds as $idx => $rId) {
             $id = !empty($rId) ? (int) $rId : null;
             $rate = (float) ($postRoomRates[$idx] ?? 0);
-            $selectedRooms[] = ['room_id' => $id, 'rate' => $rate];
+            $rtId = !empty($postRoomTypeIds[$idx]) ? (int) $postRoomTypeIds[$idx] : null;
+
+            // If room_id is set, fetch current room's room_type_id to stay synced
+            if ($id !== null) {
+                $rStmt = $pdo->prepare("SELECT room_type_id FROM rooms WHERE id = :id");
+                $rStmt->execute(['id' => $id]);
+                $rRow = $rStmt->fetch();
+                if ($rRow) {
+                    $rtId = (int) $rRow['room_type_id'];
+                }
+            }
+
+            $selectedRooms[] = ['room_id' => $id, 'rate' => $rate, 'room_type_id' => $rtId];
         }
     }
 
     // Fallback if single room submitted
     if (empty($selectedRooms)) {
-        $legacyRoomId = !empty($_POST['room_id']) ? (int) $_POST['room_id'] : null;
+        $legacyRoomId     = !empty($_POST['room_id']) ? (int) $_POST['room_id'] : null;
+        $legacyRate       = (float) ($_POST['rate_per_night'] ?? 0);
+        $legacyRoomTypeId = !empty($_POST['room_type_id']) ? (int) $_POST['room_type_id'] : null;
+        if ($legacyRoomId !== null) {
+            $rStmt = $pdo->prepare("SELECT room_type_id FROM rooms WHERE id = :id");
+            $rStmt->execute(['id' => $legacyRoomId]);
+            $rRow = $rStmt->fetch();
+            if ($rRow) {
+                $legacyRoomTypeId = (int) $rRow['room_type_id'];
+            }
+        }
+        $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate, 'room_type_id' => $legacyRoomTypeId];
+    }
         $legacyRate   = (float) ($_POST['rate_per_night'] ?? 0);
         $selectedRooms[] = ['room_id' => $legacyRoomId, 'rate' => $legacyRate];
     }
@@ -238,9 +263,9 @@ try {
 
     // ---- Sync booking_rooms table ----
     $pdo->prepare("DELETE FROM booking_rooms WHERE booking_id = :bid")->execute(['bid' => $bookingId]);
-    $brStmt = $pdo->prepare("INSERT INTO booking_rooms (booking_id, room_id, rate_per_night) VALUES (:bid, :rid, :rate)");
+    $brStmt = $pdo->prepare("INSERT INTO booking_rooms (booking_id, room_id, room_type_id, rate_per_night) VALUES (:bid, :rid, :rtid, :rate)");
     foreach ($selectedRooms as $sr) {
-        $brStmt->execute(['bid' => $bookingId, 'rid' => $sr['room_id'], 'rate' => $sr['rate']]);
+        $brStmt->execute(['bid' => $bookingId, 'rid' => $sr['room_id'], 'rtid' => $sr['room_type_id'], 'rate' => $sr['rate']]);
     }
 
     // If booking status is checked_in, update room statuses
@@ -263,6 +288,91 @@ try {
 
     // ---- Update primary guest record ----
     $guestId = (int) $oldBooking['primary_guest_id'];
+
+    // ---- Process Extra Charges ----
+    $postChargeIds   = $_POST['charge_id'] ?? [];
+    $postChargeNames = $_POST['charge_name'] ?? [];
+    $postChargeQtys  = $_POST['charge_qty'] ?? [];
+    $postChargePrices = $_POST['charge_price'] ?? [];
+    $postChargeRemarks = $_POST['charge_remarks'] ?? [];
+
+    // Process each charge
+    $extraChargesTotal = 0;
+    if (!empty($postChargeNames) && is_array($postChargeNames)) {
+        foreach ($postChargeNames as $idx => $name) {
+            $name = trim($name);
+            $chargeId = !empty($postChargeIds[$idx]) ? (int)$postChargeIds[$idx] : 0;
+            $qty = max(0.1, (float)($postChargeQtys[$idx] ?? 1));
+            $price = max(0, (float)($postChargePrices[$idx] ?? 0));
+            $remarks = trim($postChargeRemarks[$idx] ?? '');
+            
+            if ($name === '') continue;
+            
+            $total = round($qty * $price, 2);
+            $extraChargesTotal += $total;
+            
+            if ($chargeId > 0) {
+                // Update existing charge
+                $updStmt = $pdo->prepare("
+                    UPDATE booking_extra_charges 
+                    SET charge_name = :name, qty = :qty, unit_price = :price, 
+                        total_amount = :total, remarks = :remarks
+                    WHERE id = :id AND booking_id = :bid
+                ");
+                $updStmt->execute([
+                    'name' => $name,
+                    'qty' => $qty,
+                    'price' => $price,
+                    'total' => $total,
+                    'remarks' => $remarks ?: null,
+                    'id' => $chargeId,
+                    'bid' => $bookingId
+                ]);
+            } else {
+                // Add new charge
+                $insStmt = $pdo->prepare("
+                    INSERT INTO booking_extra_charges (booking_id, charge_name, qty, unit_price, total_amount, remarks, created_by, created_at)
+                    VALUES (:bid, :name, :qty, :price, :total, :remarks, :u, NOW())
+                ");
+                $insStmt->execute([
+                    'bid' => $bookingId,
+                    'name' => $name,
+                    'qty' => $qty,
+                    'price' => $price,
+                    'total' => $total,
+                    'remarks' => $remarks ?: null,
+                    'u' => $_SESSION['user_id']
+                ]);
+            }
+        }
+    }
+
+    // Also need to handle deleted charges - charges that were in DB but not in POST
+    // Get existing charge IDs for this booking
+    $existingStmt = $pdo->prepare("SELECT id FROM booking_extra_charges WHERE booking_id = :bid");
+    $existingStmt->execute(['bid' => $bookingId]);
+    $existingIds = array_map('intval', $existingStmt->fetchAll(PDO::FETCH_COLUMN));
+    
+    // Find charges to delete (in DB but not in POST)
+    $postedIds = array_filter($postChargeIds, function($id) { return (int)$id > 0; });
+    $postedIds = array_map('intval', $postedIds);
+    $deletedIds = array_diff($existingIds, $postedIds);
+    
+    if (!empty($deletedIds)) {
+        $placeholders = implode(',', array_fill(0, count($deletedIds), '?'));
+        $delStmt = $pdo->prepare("DELETE FROM booking_extra_charges WHERE booking_id = :bid AND id IN ($placeholders)");
+        $params = array_merge(['bid' => $bookingId], $deletedIds);
+        $delStmt->execute($params);
+    }
+
+    // Recalculate total extra charges for this booking
+    $sumStmt = $pdo->prepare("SELECT COALESCE(SUM(total_amount), 0) FROM booking_extra_charges WHERE booking_id = :b");
+    $sumStmt->execute(['b' => $bookingId]);
+    $newTotalExtra = (float) $sumStmt->fetchColumn();
+
+    // Update bookings.extra_amount
+    $updStmt = $pdo->prepare("UPDATE bookings SET extra_amount = :extra WHERE id = :b");
+    $updStmt->execute(['extra' => $newTotalExtra, 'b' => $bookingId]);
 
     $idPhoto     = handleDocumentUpload('guest_id_photo');
     $idPhotoBack = handleDocumentUpload('guest_id_photo_back');

@@ -46,6 +46,37 @@ if (in_array($booking['status'], ['checked_out', 'cancelled'])) {
 $roomTypes = getRoomTypes();
 $bookingRooms = getBookingRooms($bookingId);
 
+// Load existing extra charges
+$extraCharges = getBookingExtraCharges($bookingId);
+$totalExtraAmount = array_sum(array_column($extraCharges, 'total_amount'));
+
+// Handle edit_charge parameter from URL
+$editChargeId = (int)($_GET['edit_charge'] ?? 0);
+$editChargeData = null;
+if ($editChargeId > 0) {
+    $editStmt = $pdo->prepare("SELECT * FROM booking_extra_charges WHERE id = :id AND booking_id = :bid");
+    $editStmt->execute(['id' => $editChargeId, 'bid' => $bookingId]);
+    $editChargeData = $editStmt->fetch();
+}
+
+// Preset charge options
+$presetCharges = [
+    ['name' => 'Tea', 'price' => 50],
+    ['name' => 'Coffee / Milk', 'price' => 40],
+    ['name' => 'Breakfast', 'price' => 150],
+    ['name' => 'Lunch', 'price' => 250],
+    ['name' => 'Dinner', 'price' => 350],
+    ['name' => 'Laundry', 'price' => 40],
+    ['name' => 'Room Service', 'price' => 100],
+    ['name' => 'Extra Mattress', 'price' => 500],
+    ['name' => 'Mineral Water', 'price' => 30],
+    ['name' => 'Cold Drink', 'price' => 60],
+    ['name' => 'Snacks', 'price' => 80],
+    ['name' => 'Taxi', 'price' => 500],
+    ['name' => 'Parking', 'price' => 100],
+    ['name' => 'Other', 'price' => 0],
+];
+
 $pageTitle = 'Edit Booking — ' . $booking['booking_code'];
 $activeNav = 'bookings';
 require __DIR__ . '/includes/layout_top.php';
@@ -223,10 +254,10 @@ require __DIR__ . '/includes/layout_top.php';
     </div>
   </div>
 
-  <!-- ==================== BOOKING SOURCE ==================== -->
+<!-- ==================== BOOKING SOURCE ==================== -->
   <div class="card" style="border:1.5px solid var(--gold-pale);">
     <div class="card-head">
-      <h3>3. Booking Source &amp; Commission <span class="internal-only-tag">🔒 Internal Only — Never Shown to Guest</span></h3>
+      <h3>5. Booking Source & Commission <span class="internal-only-tag">🔒 Internal Only — Never Shown to Guest</span></h3>
     </div>
     <div class="form-row-3">
       <div class="form-group">
@@ -269,9 +300,99 @@ require __DIR__ . '/includes/layout_top.php';
     </div>
   </div>
 
+  <!-- ==================== EXTRA CHARGES ==================== -->
+  <div class="card">
+    <div class="card-head"><h3>5. Extra Charges <span style="font-weight:normal; font-size:0.85rem; color:var(--text-muted);">(Dinner, Tea, Laundry, Room Service, etc.)</span></h3></div>
+    <p class="tag-note" style="margin-bottom:14px;">Add, edit, or remove itemized extra charges. Totals update automatically and sync to the booking.</p>
+
+    <div style="background:var(--cream-light, #faf9f5); border:1.5px solid var(--border-color, #e5e0d8); border-radius:8px; padding:16px; margin-bottom:18px;">
+      <div class="form-row" style="align-items:end;">
+        <div class="form-group" style="flex:2;">
+          <label>Charge Name *</label>
+          <select id="extraChargePresetSelect" class="form-control">
+            <option value="">-- Quick Select (Auto-fills Price) --</option>
+            <?php foreach ($presetCharges as $pc): ?>
+              <option value="<?= e($pc['name']) ?>" data-price="<?= $pc['price'] ?>"><?= e($pc['name']) ?> (<?= money($pc['price']) ?>)</option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="form-group" style="flex:2;">
+          <label>Custom Name / Description *</label>
+          <input type="text" id="extraChargeNameInput" class="form-control" placeholder="Select preset or type custom charge...">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label>Qty *</label>
+          <input type="number" id="extraChargeQtyInput" class="form-control" value="1" min="0.1" step="0.1" oninput="recalcExtraChargeTotal()">
+        </div>
+        <div class="form-group" style="flex:1.5;">
+          <label>Unit Price (₹) *</label>
+          <input type="number" id="extraChargePriceInput" class="form-control" step="0.01" min="0" placeholder="0.00" oninput="recalcExtraChargeTotal()">
+        </div>
+        <div class="form-group" style="flex:1.5;">
+          <label>Total (₹)</label>
+          <input type="number" id="extraChargeTotalInput" class="form-control" readonly style="background:#f5f3ef; font-weight:bold;">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label>Remarks / Notes (optional)</label>
+          <input type="text" id="extraChargeRemarksInput" class="form-control" placeholder="e.g. 2 shirts dry-cleaned, late night order">
+        </div>
+        <div class="form-group" style="align-self:flex-end; max-width:200px;">
+          <button type="button" id="addExtraChargeBtn" class="btn btn-gold" style="width:100%; white-space:nowrap;">➕ Add Charge</button>
+        </div>
+      </div>
+      <div id="extraChargeFormError" style="display:none; margin-top:8px; font-size:0.88rem; color:var(--red, #d9534f); font-weight:bold;"></div>
+    </div>
+
+    <!-- Selected Extra Charges Table -->
+    <div style="margin-bottom:20px;">
+      <label style="font-weight:700; margin-bottom:8px; display:block;">Extra Charges for This Booking (Total: <span id="extraChargesTotalDisplay"><?= money($totalExtraAmount) ?></span>)</label>
+      <div class="table-wrap">
+        <table class="data-table" id="extraChargesTable">
+          <thead>
+            <tr>
+              <th>Charge Name</th>
+              <th class="text-right">Qty</th>
+              <th class="text-right">Unit Price (₹)</th>
+              <th class="text-right">Total (₹)</th>
+              <th>Remarks</th>
+              <th style="width:80px; text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="extraChargesTableBody">
+            <?php if (!$extraCharges): ?>
+              <tr id="emptyExtraChargesRow">
+                <td colspan="6" class="text-muted" style="text-align:center; padding:18px;">
+                  No extra charges added yet. Use the form above to add charges.
+                </td>
+              </tr>
+            <?php else: ?>
+              <?php foreach ($extraCharges as $idx => $ec): ?>
+                <tr data-charge-id="<?= (int)$ec['id'] ?>" data-idx="<?= $idx ?>">
+                  <td><strong><?= e($ec['charge_name']) ?></strong></td>
+                  <td class="text-right"><input type="number" class="form-control form-control-sm extra-charge-qty" value="<?= (float)$ec['qty'] ?>" min="0.1" step="0.1" style="max-width:80px; display:inline-block;" onchange="updateExtraChargeTotal(this)"></td>
+                  <td class="text-right"><input type="number" class="form-control form-control-sm extra-charge-price" value="<?= (float)$ec['unit_price'] ?>" step="0.01" min="0" style="max-width:100px; display:inline-block;" onchange="updateExtraChargeTotal(this)"></td>
+                  <td class="text-right"><strong><span class="extra-charge-row-total"><?= money((float)$ec['total_amount']) ?></span></strong></td>
+                  <td><input type="text" class="form-control form-control-sm extra-charge-remarks" value="<?= e($ec['remarks'] ?? '') ?>" style="max-width:200px; display:inline-block;"></td>
+                  <td style="text-align:right;">
+                    <button type="button" class="btn btn-sm btn-outline" onclick="editExtraCharge(this)" title="Edit">✏️</button>
+                    <button type="button" class="btn btn-sm btn-red" onclick="deleteExtraCharge(this, <?= (int)$ec['id'] ?>)" title="Delete">✕</button>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            <?php endif; ?>
+          </tbody>
+        </table>
+      </div>
+      <!-- Hidden inputs for form submission -->
+      <div id="extraChargesHiddenInputs"></div>
+    </div>
+  </div>
+
   <!-- ==================== GUEST DETAILS ==================== -->
   <div class="card">
-    <div class="card-head"><h3>4. Primary Guest Details</h3></div>
+    <div class="card-head"><h3>6. Primary Guest Details</h3></div>
     <p class="tag-note" style="margin-bottom:14px;">Editing the primary guest updates the guest record directly.</p>
 
     <div class="form-row">
@@ -654,9 +775,227 @@ function toggleAgentField() {
 }
 
 toggleCorporateFields();
-toggleAgentField();
-renderSelectedRooms();
-fetchAvailableRooms();
+  toggleAgentField();
+  renderSelectedRooms();
+  fetchAvailableRooms();
+
+// ==================== EXTRA CHARGES JAVASCRIPT ====================
+const extraChargePresetSelect = document.getElementById('extraChargePresetSelect');
+const extraChargeNameInput = document.getElementById('extraChargeNameInput');
+const extraChargeQtyInput = document.getElementById('extraChargeQtyInput');
+const extraChargePriceInput = document.getElementById('extraChargePriceInput');
+const extraChargeTotalInput = document.getElementById('extraChargeTotalInput');
+const extraChargeRemarksInput = document.getElementById('extraChargeRemarksInput');
+const addExtraChargeBtn = document.getElementById('addExtraChargeBtn');
+const extraChargeFormError = document.getElementById('extraChargeFormError');
+const extraChargesTableBody = document.getElementById('extraChargesTableBody');
+const extraChargesHiddenInputs = document.getElementById('extraChargesHiddenInputs');
+const extraChargesTotalDisplay = document.getElementById('extraChargesTotalDisplay');
+
+function recalcExtraChargeTotal() {
+  const qty = parseFloat(extraChargeQtyInput.value) || 0;
+  const price = parseFloat(extraChargePriceInput.value) || 0;
+  extraChargeTotalInput.value = (qty * price).toFixed(2);
+}
+
+if (extraChargePresetSelect) {
+  extraChargePresetSelect.addEventListener('change', function () {
+    if (this.value) {
+      extraChargeNameInput.value = this.value;
+      const opt = this.options[this.selectedIndex];
+      if (opt.dataset.price) {
+        extraChargePriceInput.value = opt.dataset.price;
+        recalcExtraChargeTotal();
+      }
+    }
+  });
+}
+
+function updateExtraChargeTotal(input) {
+  const row = input.closest('tr');
+  const chargeId = row.dataset.chargeId;
+  const qty = parseFloat(row.querySelector('.extra-charge-qty').value) || 0;
+  const price = parseFloat(row.querySelector('.extra-charge-price').value) || 0;
+  const total = qty * price;
+  row.querySelector('.extra-charge-row-total').textContent = '₹' + total.toFixed(2);
+  updateExtraChargesTotal();
+}
+
+function updateExtraChargesTotal() {
+  let total = 0;
+  document.querySelectorAll('#extraChargesTableBody tr[data-charge-id]').forEach(row => {
+    const qty = parseFloat(row.querySelector('.extra-charge-qty').value) || 0;
+    const price = parseFloat(row.querySelector('.extra-charge-price').value) || 0;
+    total += qty * price;
+  });
+  if (extraChargesTotalDisplay) {
+    extraChargesTotalDisplay.textContent = '₹' + total.toFixed(2);
+  }
+  // Also update the hidden extra_amount input in the form
+  const extraAmountInput = document.querySelector('input[name="extra_amount"]');
+  if (extraAmountInput) {
+    extraAmountInput.value = total.toFixed(2);
+  }
+}
+
+function renderExtraChargesHiddenInputs() {
+  extraChargesHiddenInputs.innerHTML = '';
+  document.querySelectorAll('#extraChargesTableBody tr[data-charge-id]').forEach(row => {
+    const chargeId = row.dataset.chargeId;
+    const name = row.cells[0].querySelector('strong').textContent;
+    const qty = row.querySelector('.extra-charge-qty').value;
+    const price = row.querySelector('.extra-charge-price').value;
+    const remarks = row.querySelector('.extra-charge-remarks').value;
+
+    ['charge_id[]', 'charge_name[]', 'charge_qty[]', 'charge_price[]', 'charge_remarks[]'].forEach((fieldName, i) => {
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = fieldName;
+      hidden.value = i === 0 ? chargeId : (i === 1 ? name : (i === 2 ? qty : (i === 3 ? price : remarks)));
+      extraChargesHiddenInputs.appendChild(hidden);
+    });
+  });
+}
+
+function editExtraCharge(btn) {
+  const row = btn.closest('tr');
+  const name = row.cells[0].querySelector('strong').textContent;
+  const qty = row.querySelector('.extra-charge-qty').value;
+  const price = row.querySelector('.extra-charge-price').value;
+  const remarks = row.querySelector('.extra-charge-remarks').value;
+  const chargeId = row.dataset.chargeId;
+
+  // Populate the form with existing values
+  extraChargeNameInput.value = name;
+  extraChargeQtyInput.value = qty;
+  extraChargePriceInput.value = price;
+  extraChargeRemarksInput.value = remarks;
+  recalcExtraChargeTotal();
+
+  // Store the charge ID being edited
+  addExtraChargeBtn.dataset.editingId = chargeId;
+  addExtraChargeBtn.textContent = '💾 Update Charge';
+
+  // Scroll to form
+  extraChargeNameInput.focus();
+}
+
+function deleteExtraCharge(btn, chargeId) {
+  if (!confirm('Delete this extra charge?')) return;
+
+  // Send AJAX request to delete
+  fetch(BASE_URL + '/booking_extra_charge_delete.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'charge_id=' + chargeId + '&csrf_token=' + '<?= e(csrfToken()) ?>'
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      btn.closest('tr').remove();
+      updateExtraChargesTotal();
+      renderExtraChargesHiddenInputs();
+      if (extraChargesTableBody.querySelectorAll('tr[data-charge-id]').length === 0) {
+        extraChargesTableBody.innerHTML = '<tr id="emptyExtraChargesRow"><td colspan="6" class="text-muted" style="text-align:center; padding:18px;">No extra charges added yet. Use the form above to add charges.</td></tr>';
+      }
+    } else {
+      alert('Failed to delete: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(err => {
+    console.error(err);
+    alert('Error deleting charge');
+  });
+}
+
+if (addExtraChargeBtn) {
+  addExtraChargeBtn.addEventListener('click', function () {
+    if (extraChargeFormError) extraChargeFormError.style.display = 'none';
+
+    const name = extraChargeNameInput.value.trim();
+    const qty = parseFloat(extraChargeQtyInput.value) || 0;
+    const price = parseFloat(extraChargePriceInput.value) || 0;
+    const remarks = extraChargeRemarksInput.value.trim();
+    const editingId = this.dataset.editingId;
+
+    if (!name) {
+      if (extraChargeFormError) { extraChargeFormError.textContent = 'Please enter a charge name.'; extraChargeFormError.style.display = 'block'; }
+      return;
+    }
+    if (qty <= 0) {
+      if (extraChargeFormError) { extraChargeFormError.textContent = 'Please enter a valid quantity.'; extraChargeFormError.style.display = 'block'; }
+      return;
+    }
+    if (price < 0) {
+      if (extraChargeFormError) { extraChargeFormError.textContent = 'Unit price cannot be negative.'; extraChargeFormError.style.display = 'block'; }
+      return;
+    }
+
+    const total = qty * price;
+
+    if (editingId) {
+      // Update existing row
+      const row = extraChargesTableBody.querySelector('tr[data-charge-id="' + editingId + '"]');
+      if (row) {
+        row.cells[0].querySelector('strong').textContent = name;
+        row.querySelector('.extra-charge-qty').value = qty;
+        row.querySelector('.extra-charge-price').value = price;
+        row.querySelector('.extra-charge-row-total').textContent = '₹' + total.toFixed(2);
+        row.querySelector('.extra-charge-remarks').value = remarks;
+      }
+      this.dataset.editingId = '';
+      this.textContent = '➕ Add Charge';
+    } else {
+      // Add new row
+      const emptyRow = document.getElementById('emptyExtraChargesRow');
+      if (emptyRow) emptyRow.remove();
+
+      const newChargeId = 'new_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+      const tr = document.createElement('tr');
+      tr.dataset.chargeId = newChargeId;
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td class="text-right"><input type="number" class="form-control form-control-sm extra-charge-qty" value="${qty}" min="0.1" step="0.1" style="max-width:80px; display:inline-block;" onchange="updateExtraChargeTotal(this)"></td>
+        <td class="text-right"><input type="number" class="form-control form-control-sm extra-charge-price" value="${price.toFixed(2)}" step="0.01" min="0" style="max-width:100px; display:inline-block;" onchange="updateExtraChargeTotal(this)"></td>
+        <td class="text-right"><strong><span class="extra-charge-row-total">₹${total.toFixed(2)}</span></strong></td>
+        <td><input type="text" class="form-control form-control-sm extra-charge-remarks" value="${escapeHtml(remarks)}" style="max-width:200px; display:inline-block;"></td>
+        <td style="text-align:right;">
+          <button type="button" class="btn btn-sm btn-outline" onclick="editExtraCharge(this)" title="Edit">✏️</button>
+          <button type="button" class="btn btn-sm btn-red" onclick="deleteExtraCharge(this, '${newChargeId}')" title="Delete">✕</button>
+        </td>
+      `;
+      extraChargesTableBody.appendChild(tr);
+    }
+
+    updateExtraChargesTotal();
+    renderExtraChargesHiddenInputs();
+
+    // Reset form
+    extraChargePresetSelect.value = '';
+    extraChargeNameInput.value = '';
+    extraChargeQtyInput.value = '1';
+    extraChargePriceInput.value = '';
+    extraChargeTotalInput.value = '';
+    extraChargeRemarksInput.value = '';
+  });
+}
+
+// Initialize: render hidden inputs for existing charges
+  renderExtraChargesHiddenInputs();
+
+  // Handle edit_charge from URL parameter
+  <?php if ($editChargeData): ?>
+    extraChargeNameInput.value = <?= json_encode($editChargeData['charge_name']) ?>;
+    extraChargeQtyInput.value = <?= json_encode((float)$editChargeData['qty']) ?>;
+    extraChargePriceInput.value = <?= json_encode((float)$editChargeData['unit_price']) ?>;
+    extraChargeRemarksInput.value = <?= json_encode($editChargeData['remarks'] ?? '') ?>;
+    recalcExtraChargeTotal();
+    addExtraChargeBtn.dataset.editingId = <?= json_encode((string)$editChargeData['id']) ?>;
+    addExtraChargeBtn.textContent = '💾 Update Charge';
+    extraChargeNameInput.focus();
+  <?php endif; ?>
 </script>
 
 <?php require __DIR__ . '/includes/layout_bottom.php'; ?>

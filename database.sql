@@ -145,13 +145,16 @@ CREATE TABLE IF NOT EXISTS `booking_guests` (
 CREATE TABLE IF NOT EXISTS `booking_rooms` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `booking_id` INT UNSIGNED NOT NULL,
-  `room_id` INT UNSIGNED NOT NULL,
+  `room_id` INT UNSIGNED DEFAULT NULL,
+  `room_type_id` INT UNSIGNED DEFAULT NULL,
   `rate_per_night` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   PRIMARY KEY (`id`),
   KEY `fk_br_booking` (`booking_id`),
   KEY `fk_br_room` (`room_id`),
+  KEY `fk_br_room_type` (`room_type_id`),
   CONSTRAINT `fk_br_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_br_room` FOREIGN KEY (`room_id`) REFERENCES `rooms` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_br_room` FOREIGN KEY (`room_id`) REFERENCES `rooms` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_br_room_type` FOREIGN KEY (`room_type_id`) REFERENCES `room_types` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------
