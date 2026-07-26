@@ -73,11 +73,35 @@ function csrfField(): string {
 /* ============================================================
  *  CODE GENERATORS
  * ============================================================ */
-function generateBookingCode(): string {
+function generateBookingCode(): string
+{
+    $pdo = db();
     $prefix = getSetting('booking_prefix', 'SN');
-    $stmt = db()->query("SELECT COUNT(*) AS c FROM bookings WHERE YEAR(created_at) = YEAR(CURDATE())");
-    $count = (int)$stmt->fetch()['c'] + 1;
-    return $prefix . date('y') . '-' . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
+    $year = date('y');
+
+    $stmt = $pdo->prepare("
+        SELECT booking_code
+        FROM bookings
+        WHERE booking_code LIKE :pattern
+        ORDER BY CAST(SUBSTRING_INDEX(booking_code, '-', -1) AS UNSIGNED) DESC
+        LIMIT 1
+        FOR UPDATE
+    ");
+
+    $stmt->execute([
+        'pattern' => $prefix . $year . '-%'
+    ]);
+
+    $lastCode = $stmt->fetchColumn();
+
+    if ($lastCode) {
+        $lastNumber = (int)substr($lastCode, strrpos($lastCode, '-') + 1);
+        $nextNumber = $lastNumber + 1;
+    } else {
+        $nextNumber = 1;
+    }
+
+    return sprintf('%s%s-%04d', $prefix, $year, $nextNumber);
 }
 
 function generateInvoiceNumber(): string {

@@ -148,7 +148,9 @@ require __DIR__ . '/includes/layout_top.php';
     <div class="form-row">
       <div class="form-group">
         <label>Check-In Date &amp; Time *</label>
-        <input type="datetime-local" name="checkin_datetime" id="checkinDatetime" class="form-control"
+        <input type="datetime-local" name="checkin_datetime" id=give me a sql qery to run for the follwing
+
+update room type of particular room number multiple at a time"checkinDatetime" class="form-control"
           value="<?= date('Y-m-d\TH:i', strtotime($booking['checkin_datetime'])) ?>" required>
       </div>
       <div class="form-group">
