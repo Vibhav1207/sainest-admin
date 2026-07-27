@@ -4,9 +4,15 @@
  * Returns JSON containing booking details and guest list.
  */
 require_once __DIR__ . '/../includes/auth.php';
-requireRole(['admin', 'manager', 'frontdesk', 'housekeeping']);
 
 header('Content-Type: application/json');
+
+requireLogin();
+if (!hasRole(['admin', 'manager', 'frontdesk', 'housekeeping'])) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have permission to perform this action.']);
+    exit;
+}
 
 $roomId = (int) ($_GET['room_id'] ?? 0);
 

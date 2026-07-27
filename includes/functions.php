@@ -170,15 +170,34 @@ function deleteDocumentFile(?string $filename): void {
  * ============================================================ */
 function getActiveReservationsToday(): array {
     $today = date('Y-m-d');
-    $stmt = db()->prepare("
-        SELECT DISTINCT room_id 
-        FROM bookings 
-        WHERE status = 'reserved' 
-          AND DATE(checkin_datetime) <= :today1 
-          AND expected_checkout_date > :today2
+    ensureBookingRoomsTableExists();
+    $pdo = db();
+
+    // Primary room from bookings table
+    $stmt = $pdo->prepare("
+        SELECT DISTINCT b.room_id 
+        FROM bookings b
+        WHERE b.status = 'reserved' 
+          AND DATE(b.checkin_datetime) <= :today1 
+          AND b.expected_checkout_date > :today2
     ");
     $stmt->execute(['today1' => $today, 'today2' => $today]);
-    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    $primaryRoomIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+    // Additional rooms from booking_rooms junction table
+    $stmt2 = $pdo->prepare("
+        SELECT DISTINCT br.room_id 
+        FROM bookings b
+        JOIN booking_rooms br ON br.booking_id = b.id
+        WHERE b.status = 'reserved' 
+          AND DATE(b.checkin_datetime) <= :today1 
+          AND b.expected_checkout_date > :today2
+          AND br.room_id IS NOT NULL
+    ");
+    $stmt2->execute(['today1' => $today, 'today2' => $today]);
+    $secondaryRoomIds = array_map('intval', $stmt2->fetchAll(PDO::FETCH_COLUMN));
+
+    return array_unique(array_merge($primaryRoomIds, $secondaryRoomIds));
 }
 
 function getRoomCurrentStatus(array $room, array $activeReservedRoomIds): string {

@@ -1,8 +1,14 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
-requireRole(['admin', 'manager']);
 
 header('Content-Type: application/json');
+
+requireLogin();
+if (!hasRole(['admin', 'manager'])) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have permission to perform this action.']);
+    exit;
+}
 
 $preset        = $_GET['preset'] ?? 'this_month';
 $customFrom    = $_GET['from'] ?? '';

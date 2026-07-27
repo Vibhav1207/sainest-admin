@@ -47,8 +47,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck() && $canEdit) {
             // currently checked in must stay "occupied" (free it via Check-Out),
             // and a room can't be forced to "occupied" here without a real
             // booking (use Check-In for that) — mirrors api/update_room_status.php.
-            $activeStmt = db()->prepare("SELECT id FROM bookings WHERE room_id = :id AND status = 'checked_in' LIMIT 1");
-            $activeStmt->execute(['id' => $roomIdForStatus]);
+            $activeStmt = db()->prepare("
+                SELECT 1 FROM bookings b
+                LEFT JOIN booking_rooms br ON br.booking_id = b.id
+                WHERE (b.room_id = :id OR br.room_id = :id2) AND b.status = 'checked_in'
+                LIMIT 1
+            ");
+            $activeStmt->execute(['id' => $roomIdForStatus, 'id2' => $roomIdForStatus]);
             $hasActiveBooking = (bool) $activeStmt->fetch();
 
             if ($hasActiveBooking && $newStatus !== 'occupied') {
@@ -379,7 +384,9 @@ function closeStatusModal() {
 
 function setRoomStatus(newStatus) {
   if (!roomActiveTile) return;
-  const roomId = roomActiveTile.dataset.roomId;
+  const tile = roomActiveTile;
+  const roomId = tile.dataset.roomId;
+  const currentStatus = tile.dataset.status;
   const errorBox = document.getElementById('statusModalError');
   errorBox.style.display = 'none';
 
@@ -395,25 +402,31 @@ function setRoomStatus(newStatus) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   })
-  .then(r => r.json())
+  .then(r => {
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      throw new Error('Server returned non-JSON (auth or server error)');
+    }
+    return r.json();
+  })
   .then(data => {
     if (!data.success) {
       errorBox.textContent = data.message || 'Could not update room status.';
       errorBox.style.display = 'block';
       document.querySelectorAll('.room-status-btn').forEach(btn => {
-        btn.disabled = (btn.dataset.status === 'occupied') || (btn.dataset.status === roomActiveTile.dataset.status);
+        btn.disabled = (btn.dataset.status === 'occupied') || (btn.dataset.status === currentStatus);
       });
       return;
     }
-    applyStatusToTile(roomActiveTile, data.status);
+    applyStatusToTile(tile, data.status);
     roomToast('Room ' + data.room_number + ' set to ' + data.label);
     closeStatusModal();
   })
-  .catch(() => {
-    errorBox.textContent = 'Network error — please check your connection and try again.';
+  .catch(err => {
+    errorBox.textContent = err.message || 'Network error — please check your connection and try again.';
     errorBox.style.display = 'block';
     document.querySelectorAll('.room-status-btn').forEach(btn => {
-      btn.disabled = (btn.dataset.status === 'occupied') || (btn.dataset.status === roomActiveTile.dataset.status);
+      btn.disabled = (btn.dataset.status === 'occupied') || (btn.dataset.status === currentStatus);
     });
   });
 }
@@ -476,7 +489,7 @@ function openGuestModal(tile) {
       
       let html = '';
       
-      const roomsList = (res.booking_rooms || []).map(r => 'Room ' + r.room_number + ' (' + r.room_type_name + ')').join(', ') || ('Room ' + roomNum);
+      const roomsList = (data.booking_rooms || []).map(r => 'Room ' + r.room_number + ' (' + r.room_type_name + ')').join(', ') || ('Room ' + number);
 
       html += '<div style="margin-bottom:18px;">';
       html += '  <div class="stat-row"><span class="lbl">Booked Room(s)</span><span class="val">' + escapeHtml(roomsList) + '</span></div>';
@@ -497,11 +510,11 @@ function openGuestModal(tile) {
       html += '  <div class="stat-row"><span class="lbl">Actions</span><span class="val"><a href="' + ROOM_BASE_URL + '/booking_view.php?id=' + b.booking_id + '" style="color:var(--gold); font-weight:bold; text-decoration:underline;">View Details</a> &nbsp;·&nbsp; <a href="' + ROOM_BASE_URL + '/booking_edit_stay.php?id=' + b.booking_id + '" class="btn btn-sm btn-gold" style="display:inline-block; margin-left:6px;">✏️ Edit Stay / Add Charges</a></span></div>';
       html += '</div>';
 
-      if (res.extra_charges && res.extra_charges.length > 0) {
+      if (data.extra_charges && data.extra_charges.length > 0) {
         html += '<div style="background:#faf9f5; border:1px solid #e5e0d8; border-radius:6px; padding:12px; margin-bottom:18px;">';
         html += '  <h5 style="margin-bottom:8px; color:var(--text-color);">☕ Extra Charges Added During Stay:</h5>';
         html += '  <ul style="margin:0; padding-left:18px; font-size:0.88rem;">';
-        res.extra_charges.forEach(ec => {
+        data.extra_charges.forEach(ec => {
           html += '    <li><strong>' + escapeHtml(ec.charge_name) + '</strong> (' + parseFloat(ec.qty) + ' × ₹' + parseFloat(ec.unit_price).toFixed(2) + ' = <strong>₹' + parseFloat(ec.total_amount).toFixed(2) + '</strong>)' + (ec.remarks ? ' <em>(' + escapeHtml(ec.remarks) + ')</em>' : '') + '</li>';
         });
         html += '  </ul>';

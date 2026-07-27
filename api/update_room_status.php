@@ -9,9 +9,15 @@
  * to "occupied" here without a real booking — use Check-In for that.
  */
 require_once __DIR__ . '/../includes/auth.php';
-requireRole(['admin', 'manager', 'frontdesk', 'housekeeping']);
 
 header('Content-Type: application/json');
+
+requireLogin();
+if (!hasRole(['admin', 'manager', 'frontdesk', 'housekeeping'])) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'You do not have permission to perform this action.']);
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !csrfCheck()) {
     http_response_code(400);
@@ -41,8 +47,13 @@ try {
         throw new RuntimeException('Room not found.');
     }
 
-    $activeStmt = $pdo->prepare("SELECT id FROM bookings WHERE room_id = :id AND status = 'checked_in' LIMIT 1");
-    $activeStmt->execute(['id' => $roomId]);
+    $activeStmt = $pdo->prepare("
+        SELECT 1 FROM bookings b
+        LEFT JOIN booking_rooms br ON br.booking_id = b.id
+        WHERE (b.room_id = :id OR br.room_id = :id2) AND b.status = 'checked_in'
+        LIMIT 1
+    ");
+    $activeStmt->execute(['id' => $roomId, 'id2' => $roomId]);
     $hasActiveBooking = (bool) $activeStmt->fetch();
 
     if ($hasActiveBooking && $status !== 'occupied') {
