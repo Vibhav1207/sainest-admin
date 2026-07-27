@@ -12,10 +12,14 @@ $selectedPayments = [];
 
 if ($selectedBookingId) {
     $stmt = db()->prepare("
-      SELECT b.*, r.room_number, r.id AS room_id, rt.name AS room_type_name, g.full_name AS guest_name, g.phone AS guest_phone
+      SELECT b.*,
+             COALESCE(r.room_number, '—') AS room_number,
+             COALESCE(r.id, 0) AS room_id,
+             COALESCE(rt.name, '') AS room_type_name,
+             g.full_name AS guest_name, g.phone AS guest_phone
       FROM bookings b
-      JOIN rooms r ON r.id = b.room_id
-      JOIN room_types rt ON rt.id = r.room_type_id
+      LEFT JOIN rooms r ON r.id = b.room_id
+      LEFT JOIN room_types rt ON rt.id = r.room_type_id
       JOIN guests g ON g.id = b.primary_guest_id
       WHERE b.id = :id AND b.status = 'checked_in'
     ");
@@ -39,9 +43,11 @@ if ($selectedBookingId) {
 }
 
 $activeBookings = db()->query("
-  SELECT b.*, r.room_number, g.full_name AS guest_name
+  SELECT b.*,
+         COALESCE(r.room_number, '—') AS room_number,
+         g.full_name AS guest_name
   FROM bookings b
-  JOIN rooms r ON r.id = b.room_id
+  LEFT JOIN rooms r ON r.id = b.room_id
   JOIN guests g ON g.id = b.primary_guest_id
   WHERE b.status = 'checked_in'
   ORDER BY b.expected_checkout_date ASC, b.checkin_datetime ASC

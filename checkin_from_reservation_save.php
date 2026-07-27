@@ -76,6 +76,13 @@ try {
         throw new RuntimeException('No rooms found for this reservation.');
     }
 
+    // Block check-in if any room is unassigned (room_id is NULL)
+    foreach ($bookingRooms as $br) {
+        if (empty($br['room_id'])) {
+            throw new RuntimeException('One or more rooms are not yet assigned. Please assign all rooms via the booking edit page before checking in.');
+        }
+    }
+
     $roomNumbersArr = [];
 
     // Lock all rooms and make sure no OTHER booking is presently checked in there right now.

@@ -94,8 +94,10 @@ try {
     $hkStmt = $pdo->prepare("INSERT INTO housekeeping_tasks (room_id, task_type, status, notes, created_by) VALUES (:r, 'cleaning', 'pending', 'Auto-created after guest check-out', :u)");
 
     foreach ($bookingRooms as $br) {
-        $updRoom->execute(['id' => $br['room_id']]);
-        $hkStmt->execute(['r' => $br['room_id'], 'u' => $_SESSION['user_id']]);
+        if (!empty($br['room_id'])) {
+            $updRoom->execute(['id' => $br['room_id']]);
+            $hkStmt->execute(['r' => $br['room_id'], 'u' => $_SESSION['user_id']]);
+        }
     }
 
     logActivity('checkout', "Booking {$booking['booking_code']} checked out. Invoice $invoiceNumber generated.");

@@ -22,6 +22,19 @@ if (!$booking) {
 $bookingRooms = getBookingRooms($bookingId);
 $roomNumbersStr = implode(', ', array_map(fn($r) => ($r['room_number'] !== 'Unassigned' ? 'Room ' . $r['room_number'] : 'Unassigned') . ' (' . $r['room_type_name'] . ')', $bookingRooms));
 
+// Guard: block check-in if any room is unassigned
+$hasUnassigned = false;
+foreach ($bookingRooms as $br) {
+    if (empty($br['room_id'])) {
+        $hasUnassigned = true;
+        break;
+    }
+}
+if ($hasUnassigned) {
+    flash('error', 'This reservation has rooms that are not yet assigned. Please assign rooms to all reservations before checking in.');
+    redirect('booking_edit.php?id=' . $bookingId);
+}
+
 $gStmt = db()->prepare("
   SELECT g.* FROM booking_guests bg JOIN guests g ON g.id = bg.guest_id
   WHERE bg.booking_id = :id AND bg.is_primary = 1 LIMIT 1

@@ -483,6 +483,12 @@ function updateAvailableRoomDropdown() {
   });
   
   roomSelect.disabled = false;
+
+  // Auto-populate rate from room type base_rate
+  const firstRoom = filtered[0];
+  if (firstRoom) {
+    rateInput.value = firstRoom.base_rate;
+  }
 }
 
 roomTypeSelect.addEventListener('change', updateAvailableRoomDropdown);

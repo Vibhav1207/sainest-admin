@@ -603,9 +603,9 @@ function updateAvailableRoomDropdown() {
 
   roomSelect.disabled = false;
 
-  // Auto-fill rate input with base rate of first available room
+  // Auto-populate rate from room type base_rate
   const firstAvail = filtered.find(r => r.is_available);
-  if (firstAvail && !rateInput.value) {
+  if (firstAvail) {
     rateInput.value = firstAvail.base_rate;
   }
 }

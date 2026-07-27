@@ -26,8 +26,8 @@ foreach ($allRooms as $r) {
 }
 $occupancyPct = $totalRooms > 0 ? round(($occupied / $totalRooms) * 100) : 0;
 
-/* KPI: Today's activity */
-$stmt = db()->prepare("SELECT COUNT(*) c FROM bookings WHERE DATE(checkin_datetime) = :d AND status != 'cancelled'");
+/* KPI: Today's activity — actual check-ins (status must be checked_in, not just reserved) */
+$stmt = db()->prepare("SELECT COUNT(*) c FROM bookings WHERE DATE(checkin_datetime) = :d AND status = 'checked_in'");
 $stmt->execute(['d' => $today]);
 $todayCheckins = (int) $stmt->fetch()['c'];
 
@@ -102,6 +102,69 @@ $dueOutList = db()->prepare("
 ");
 $dueOutList->execute(['d' => $today]);
 $dueOutList = $dueOutList->fetchAll();
+
+/* Today's expected check-ins (reservations where checkin_datetime is today) */
+$todayExpectedCheckins = db()->prepare("
+  SELECT b.*,
+         COALESCE(
+           NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
+           r_primary.room_number,
+           'Unassigned'
+         ) AS room_number,
+         g.full_name AS guest_name, g.phone AS guest_phone
+  FROM bookings b
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN booking_rooms br ON br.booking_id = b.id
+  LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
+  JOIN guests g ON g.id = b.primary_guest_id
+  WHERE b.status = 'reserved' AND DATE(b.checkin_datetime) = :d
+  GROUP BY b.id
+  ORDER BY b.checkin_datetime ASC
+");
+$todayExpectedCheckins->execute(['d' => $today]);
+$todayExpectedCheckins = $todayExpectedCheckins->fetchAll();
+
+/* Today's actual check-ins (bookings that were checked in today) */
+$todayActualCheckins = db()->prepare("
+  SELECT b.*,
+         COALESCE(
+           NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
+           r_primary.room_number,
+           'Unassigned'
+         ) AS room_number,
+         g.full_name AS guest_name, g.phone AS guest_phone
+  FROM bookings b
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN booking_rooms br ON br.booking_id = b.id
+  LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
+  JOIN guests g ON g.id = b.primary_guest_id
+  WHERE b.status = 'checked_in' AND DATE(b.checkin_datetime) = :d
+  GROUP BY b.id
+  ORDER BY b.checkin_datetime ASC
+");
+$todayActualCheckins->execute(['d' => $today]);
+$todayActualCheckins = $todayActualCheckins->fetchAll();
+
+/* Today's actual check-outs (bookings that were checked out today) */
+$todayActualCheckouts = db()->prepare("
+  SELECT b.*,
+         COALESCE(
+           NULLIF(GROUP_CONCAT(DISTINCT r_multi.room_number ORDER BY CAST(r_multi.room_number AS UNSIGNED) SEPARATOR ', '), ''),
+           r_primary.room_number,
+           'Unassigned'
+         ) AS room_number,
+         g.full_name AS guest_name, g.phone AS guest_phone
+  FROM bookings b
+  LEFT JOIN rooms r_primary ON r_primary.id = b.room_id
+  LEFT JOIN booking_rooms br ON br.booking_id = b.id
+  LEFT JOIN rooms r_multi ON r_multi.id = br.room_id
+  JOIN guests g ON g.id = b.primary_guest_id
+  WHERE b.status = 'checked_out' AND DATE(b.actual_checkout_datetime) = :d
+  GROUP BY b.id
+  ORDER BY b.actual_checkout_datetime DESC
+");
+$todayActualCheckouts->execute(['d' => $today]);
+$todayActualCheckouts = $todayActualCheckouts->fetchAll();
 
 /* Advance bookings (reservations) arriving today or soon */
 $upcomingReservations = db()->query("
@@ -207,6 +270,93 @@ require __DIR__ . '/includes/layout_top.php';
           <td class="nowrap"><?= date('d M, h:i A', strtotime($b['checkin_datetime'])) ?></td>
           <td><?= bookingStatusBadge($b['status']) ?></td>
           <td><a href="<?= BASE_URL ?>/checkout.php?booking_id=<?= $b['id'] ?>" class="btn btn-sm btn-gold">Check Out</a></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>🏁 Today's Completed Check-Outs</h3>
+    <span class="text-muted" style="font-size:0.85em;">Based on actual check-out time</span>
+  </div>
+  <?php if (!$todayActualCheckouts): ?>
+    <div class="empty-state" style="padding:24px;"><div class="empty-icon">📭</div>No check-outs completed today yet.</div>
+  <?php else: ?>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Room(s)</th><th>Guest</th><th>Phone</th><th>Booking Code</th><th>Check-Out Time</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      <?php foreach ($todayActualCheckouts as $b): ?>
+        <tr>
+          <td><strong><?= e($b['room_number']) ?></strong></td>
+          <td><?= e($b['guest_name']) ?></td>
+          <td class="nowrap"><?= e($b['guest_phone']) ?></td>
+          <td class="nowrap"><a href="<?= BASE_URL ?>/booking_view.php?id=<?= $b['id'] ?>"><?= e($b['booking_code']) ?></a></td>
+          <td class="nowrap"><?= date('d M, h:i A', strtotime($b['actual_checkout_datetime'])) ?></td>
+          <td><?= bookingStatusBadge($b['status']) ?></td>
+          <td><a href="<?= BASE_URL ?>/booking_view.php?id=<?= $b['id'] ?>" class="btn btn-sm btn-outline">View</a></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>🛎️ Today's Expected Check-Ins</h3>
+    <a href="<?= BASE_URL ?>/bookings.php?status=reserved" class="btn btn-sm btn-outline">View All Reservations</a>
+  </div>
+  <?php if (!$todayExpectedCheckins): ?>
+    <div class="empty-state" style="padding:24px;"><div class="empty-icon">📭</div>No reservations arriving today.</div>
+  <?php else: ?>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Room(s)</th><th>Guest</th><th>Phone</th><th>Booking Code</th><th>Planned Arrival</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      <?php foreach ($todayExpectedCheckins as $b): ?>
+        <tr>
+          <td><strong><?= e($b['room_number']) ?></strong></td>
+          <td><?= e($b['guest_name']) ?></td>
+          <td class="nowrap"><?= e($b['guest_phone']) ?></td>
+          <td class="nowrap"><?= e($b['booking_code']) ?></td>
+          <td class="nowrap"><?= date('d M Y, h:i A', strtotime($b['checkin_datetime'])) ?></td>
+          <td><?= bookingStatusBadge($b['status']) ?></td>
+          <td><a href="<?= BASE_URL ?>/checkin_from_reservation.php?id=<?= $b['id'] ?>" class="btn btn-sm btn-gold">Check In →</a></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>✅ Today's Actual Check-Ins</h3>
+    <span class="text-muted" style="font-size:0.85em;">Based on actual check-in time</span>
+  </div>
+  <?php if (!$todayActualCheckins): ?>
+    <div class="empty-state" style="padding:24px;"><div class="empty-icon">📭</div>No check-ins completed today yet.</div>
+  <?php else: ?>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Room(s)</th><th>Guest</th><th>Phone</th><th>Booking Code</th><th>Check-In Time</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      <?php foreach ($todayActualCheckins as $b): ?>
+        <tr>
+          <td><strong><?= e($b['room_number']) ?></strong></td>
+          <td><?= e($b['guest_name']) ?></td>
+          <td class="nowrap"><?= e($b['guest_phone']) ?></td>
+          <td class="nowrap"><a href="<?= BASE_URL ?>/booking_view.php?id=<?= $b['id'] ?>"><?= e($b['booking_code']) ?></a></td>
+          <td class="nowrap"><?= date('d M, h:i A', strtotime($b['checkin_datetime'])) ?></td>
+          <td><?= bookingStatusBadge($b['status']) ?></td>
+          <td><a href="<?= BASE_URL ?>/booking_view.php?id=<?= $b['id'] ?>" class="btn btn-sm btn-outline">View</a></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
