@@ -123,8 +123,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck() && $canEdit) {
 
 ensureRoomTypesMigrated();
 $rooms = db()->query("
-  SELECT r.*, rt.name AS type_name, rt.base_rate
-  FROM rooms r JOIN room_types rt ON rt.id = r.room_type_id
+  SELECT r.*, rt.name AS type_name, rt.base_rate,
+         COALESCE(br.rate_per_night, b.rate_per_night) AS booking_rate
+  FROM rooms r
+  JOIN room_types rt ON rt.id = r.room_type_id
+  LEFT JOIN booking_rooms br ON br.room_id = r.id
+    AND EXISTS (
+      SELECT 1 FROM bookings bk
+      WHERE bk.id = br.booking_id
+        AND bk.status IN ('checked_in','reserved')
+        AND bk.expected_checkout_date > CURDATE()
+    )
+  LEFT JOIN bookings b ON b.room_id = r.id
+    AND b.status IN ('checked_in','reserved')
+    AND b.expected_checkout_date > CURDATE()
   ORDER BY r.floor, r.room_number
 ")->fetchAll();
 

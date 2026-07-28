@@ -302,7 +302,7 @@ function renderRoomCard(array $r): void {
           <span class="edit-room-link" onclick="openEditRoomModal(event, <?= (int)$r['id'] ?>, '<?= e($r['room_number']) ?>', <?= (int)$r['room_type_id'] ?>, '<?= e($r['status']) ?>')" title="Edit Room Type" style="float:right; font-size:0.9rem; cursor:pointer; opacity:0.6; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">✏️</span>
         <?php endif; ?>
       </div>
-      <div class="rt"><?= e($r['type_name']) ?> · <?= money($r['base_rate']) ?>/night</div>
+      <div class="rt"><?= e($r['type_name']) ?> · <?= money(!empty($r['booking_rate']) ? $r['booking_rate'] : $r['base_rate']) ?>/night</div>
       <span class="badge-slot"><?= roomStatusBadge($r['status']) ?></span>
     </div>
     <?php

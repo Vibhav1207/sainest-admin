@@ -442,8 +442,19 @@ require __DIR__ . '/includes/layout_top.php';
         <label>ID Proof Type</label>
         <select name="guest_id_type" class="form-control">
           <option value="">— None —</option>
-          <?php foreach (['Aadhaar Card','PAN Card','Driving Licence','Passport','Voter ID','Ration Card','Other'] as $idOpt): ?>
-            <option value="<?= $idOpt ?>" <?= ($booking['id_proof_type'] ?? '') === $idOpt ? 'selected' : '' ?>><?= $idOpt ?></option>
+          <?php
+          $idTypeOptions = [
+            'aadhar'          => 'Aadhaar Card',
+            'pan'             => 'PAN Card',
+            'passport'        => 'Passport',
+            'driving_license' => 'Driving License',
+            'voter_id'        => 'Voter ID',
+            'other'           => 'Other',
+          ];
+          $currentIdType = $booking['id_proof_type'] ?? '';
+          ?>
+          <?php foreach ($idTypeOptions as $dbVal => $label): ?>
+            <option value="<?= $dbVal ?>" <?= $currentIdType === $dbVal ? 'selected' : '' ?>><?= $label ?></option>
           <?php endforeach; ?>
         </select>
       </div>
