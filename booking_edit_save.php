@@ -92,6 +92,8 @@ try {
     if (empty($selectedRooms)) {
         throw new RuntimeException('At least one room or room type must be selected.');
     }
+    assertUniqueBookingRoomIds($selectedRooms);
+    ensureBookingRoomsTableExists();
 
     // ---- Parse other POST fields ----
     $numGuests           = max(1, (int) ($_POST['num_guests'] ?? 1));

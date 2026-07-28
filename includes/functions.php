@@ -593,6 +593,7 @@ function ensureBookingRoomsTableExists(): void {
                   `room_type_id` INT UNSIGNED DEFAULT NULL,
                   `rate_per_night` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
                   PRIMARY KEY (`id`),
+                  UNIQUE KEY `uq_booking_room` (`booking_id`, `room_id`),
                   KEY `fk_br_booking` (`booking_id`),
                   KEY `fk_br_room` (`room_id`),
                   KEY `fk_br_room_type` (`room_type_id`),
@@ -626,8 +627,61 @@ function ensureBookingRoomsTableExists(): void {
                 WHERE br.`room_id` IS NOT NULL AND br.`room_type_id` IS NULL
             ");
         }
+
+        // The browser prevents duplicate picks; retain the same invariant for
+        // replayed or malformed requests at the database boundary as well.
+        $uniqueIndex = $pdo->query("SHOW INDEX FROM `booking_rooms` WHERE Key_name = 'uq_booking_room'")->fetch();
+        if (!$uniqueIndex) {
+            // Repair pre-constraint records while preserving the original row/rate.
+            $pdo->exec("
+                DELETE duplicate_br
+                FROM `booking_rooms` duplicate_br
+                INNER JOIN `booking_rooms` retained_br
+                  ON retained_br.booking_id = duplicate_br.booking_id
+                 AND retained_br.room_id = duplicate_br.room_id
+                 AND retained_br.id < duplicate_br.id
+                WHERE duplicate_br.room_id IS NOT NULL
+            ");
+            $pdo->exec("ALTER TABLE `booking_rooms` ADD UNIQUE KEY `uq_booking_room` (`booking_id`, `room_id`)");
+        }
+
+        // One-time migration: populate booking_rooms for legacy bookings that were
+        // created before the multi-room system was introduced (bookings that have
+        // bookings.room_id set but no rows in booking_rooms).
+        static $legacyMigrated = false;
+        if (!$legacyMigrated) {
+            $legacyMigrated = true;
+            $missingCount = $pdo->query("
+                SELECT COUNT(*) FROM bookings b
+                WHERE b.room_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM booking_rooms br WHERE br.booking_id = b.id)
+            ")->fetchColumn();
+            if ($missingCount > 0) {
+                $pdo->exec("
+                    INSERT IGNORE INTO `booking_rooms` (`booking_id`, `room_id`, `room_type_id`, `rate_per_night`)
+                    SELECT b.`id`, b.`room_id`, r.`room_type_id`, b.`rate_per_night`
+                    FROM `bookings` b
+                    LEFT JOIN `rooms` r ON r.`id` = b.`room_id`
+                    WHERE b.`room_id` IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM `booking_rooms` br WHERE br.`booking_id` = b.`id`)
+                ");
+            }
+        }
     } catch (Throwable $e) {
         // Silently ignore if DB is not initialized
+    }
+}
+
+/** Reject duplicate concrete room allocations before a booking is persisted. */
+function assertUniqueBookingRoomIds(array $rooms): void {
+    $seen = [];
+    foreach ($rooms as $room) {
+        $roomId = is_array($room) ? (int) ($room['room_id'] ?? 0) : (int) $room;
+        if ($roomId <= 0) continue; // Unassigned reservation slots may repeat.
+        if (isset($seen[$roomId])) {
+            throw new RuntimeException('The same room cannot be allocated more than once in a booking.');
+        }
+        $seen[$roomId] = true;
     }
 }
 
@@ -848,5 +902,4 @@ function getRoomTypes(): array {
 
 // Automatically ensure schema migrations run on application initialization
 ensureExtraAmountColumnExists();
-
 

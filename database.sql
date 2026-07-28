@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS `booking_rooms` (
   `room_type_id` INT UNSIGNED DEFAULT NULL,
   `rate_per_night` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_booking_room` (`booking_id`, `room_id`),
   KEY `fk_br_booking` (`booking_id`),
   KEY `fk_br_room` (`room_id`),
   KEY `fk_br_room_type` (`room_type_id`),

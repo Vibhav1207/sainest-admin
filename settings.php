@@ -19,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck()) {
     }
 
     // Logo upload
+    $logoUploaded = false;
     if (!empty($_FILES['hotel_logo']['tmp_name']) && $_FILES['hotel_logo']['error'] === UPLOAD_ERR_OK) {
         $allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
@@ -27,15 +28,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck()) {
         if (isset($allowed[$mime])) {
             if (!is_dir(UPLOAD_LOGO_PATH)) mkdir(UPLOAD_LOGO_PATH, 0755, true);
             $destRel = 'assets/images/logo.png'; // overwrite active logo used across the app
-            @copy($_FILES['hotel_logo']['tmp_name'], ROOT_PATH . '/' . $destRel);
-            flash('success', 'Logo updated.');
+            move_uploaded_file($_FILES['hotel_logo']['tmp_name'], ROOT_PATH . '/' . $destRel);
+            $logoUploaded = true;
         } else {
             flash('error', 'Logo must be JPG, PNG or WEBP.');
         }
     }
 
     logActivity('settings_update', 'Hotel settings updated');
-    flash('success', 'Settings saved successfully.');
+    flash('success', $logoUploaded ? 'Settings and logo updated successfully.' : 'Settings saved successfully.');
     redirect('settings.php');
 }
 

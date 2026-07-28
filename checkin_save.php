@@ -99,6 +99,8 @@ try {
     if (empty($selectedRooms) || empty($checkoutDate) || empty($names[0])) {
         throw new RuntimeException('Please select at least one room, expected checkout date, and primary guest details.');
     }
+    assertUniqueBookingRoomIds($selectedRooms);
+    ensureBookingRoomsTableExists();
 
     $pdo->beginTransaction();
 

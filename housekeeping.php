@@ -9,21 +9,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck()) {
     $action = $_POST['action'] ?? '';
     try {
         if ($action === 'create_task') {
+            $allowedTaskTypes = ['cleaning', 'maintenance', 'inspection', 'laundry', 'other'];
+            $allowedPriorities = ['low', 'normal', 'high', 'urgent'];
+            $taskType = $_POST['task_type'];
+            $priority = $_POST['priority'];
+            if (!in_array($taskType, $allowedTaskTypes, true)) {
+                throw new RuntimeException('Invalid task type.');
+            }
+            if (!in_array($priority, $allowedPriorities, true)) {
+                throw new RuntimeException('Invalid priority level.');
+            }
             $stmt = db()->prepare("INSERT INTO housekeeping_tasks (room_id, task_type, status, priority, assigned_to, notes, created_by) VALUES (:r,:t,'pending',:p,:a,:n,:u)");
             $stmt->execute([
                 'r' => (int) $_POST['room_id'],
-                't' => $_POST['task_type'],
-                'p' => $_POST['priority'],
+                't' => $taskType,
+                'p' => $priority,
                 'a' => $_POST['assigned_to'] ?: null,
                 'n' => trim($_POST['notes']),
                 'u' => $_SESSION['user_id'],
             ]);
             flash('success', 'Housekeeping task created.');
         } elseif ($action === 'update_task') {
+            $allowedStatuses = ['pending', 'in_progress', 'completed'];
             $taskId = (int) $_POST['task_id'];
             $status = $_POST['status'];
-            $stmt = db()->prepare("UPDATE housekeeping_tasks SET status = :s, completed_at = " . ($status === 'completed' ? 'NOW()' : 'NULL') . " WHERE id = :id");
-            $stmt->execute(['s' => $status, 'id' => $taskId]);
+            if (!in_array($status, $allowedStatuses, true)) {
+                throw new RuntimeException('Invalid task status.');
+            }
+            $completedAt = ($status === 'completed') ? new DateTime() : null;
+            $stmt = db()->prepare("UPDATE housekeeping_tasks SET status = :s, completed_at = :c WHERE id = :id");
+            $stmt->execute(['s' => $status, 'c' => $completedAt, 'id' => $taskId]);
 
             if ($status === 'completed') {
                 $taskStmt = db()->prepare("SELECT room_id FROM housekeeping_tasks WHERE id = :id");

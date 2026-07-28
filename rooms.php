@@ -16,7 +16,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck() && $canEdit) {
             
             $expectedType = getExpectedRoomTypeName($roomNumber);
             if ($expectedType) {
-                $expectedTypeId = db()->query("SELECT id FROM room_types WHERE name = '" . $expectedType . "'")->fetchColumn();
+                $typeStmt = db()->prepare("SELECT id FROM room_types WHERE name = :name");
+                $typeStmt->execute(['name' => $expectedType]);
+                $expectedTypeId = $typeStmt->fetchColumn();
                 if ($expectedTypeId && $expectedTypeId != $typeId) {
                     throw new RuntimeException("Room $roomNumber must be assigned to '$expectedType'.");
                 }
@@ -42,6 +44,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck() && $canEdit) {
         } elseif ($action === 'update_status') {
             $roomIdForStatus = (int) $_POST['room_id'];
             $newStatus = $_POST['status'];
+            $allowedStatuses = ['available', 'occupied', 'dirty', 'maintenance', 'reserved'];
+            if (!in_array($newStatus, $allowedStatuses, true)) {
+                throw new RuntimeException('Invalid room status value.');
+            }
 
             // Keep this in sync with the guest lifecycle: a room with a guest
             // currently checked in must stay "occupied" (free it via Check-Out),
@@ -95,7 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck() && $canEdit) {
 
             $expectedType = getExpectedRoomTypeName($room['room_number']);
             if ($expectedType) {
-                $expectedTypeId = db()->query("SELECT id FROM room_types WHERE name = '" . $expectedType . "'")->fetchColumn();
+                $typeLookup = db()->prepare("SELECT id FROM room_types WHERE name = :name");
+                $typeLookup->execute(['name' => $expectedType]);
+                $expectedTypeId = $typeLookup->fetchColumn();
                 if ($expectedTypeId && $expectedTypeId != $newTypeId) {
                     throw new RuntimeException("Room " . $room['room_number'] . " must be assigned to '$expectedType'.");
                 }

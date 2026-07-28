@@ -148,9 +148,7 @@ require __DIR__ . '/includes/layout_top.php';
     <div class="form-row">
       <div class="form-group">
         <label>Check-In Date &amp; Time *</label>
-        <input type="datetime-local" name="checkin_datetime" id=give me a sql qery to run for the follwing
-
-update room type of particular room number multiple at a time"checkinDatetime" class="form-control"
+        <input type="datetime-local" name="checkin_datetime" id="checkinDatetime" class="form-control"
           value="<?= date('Y-m-d\TH:i', strtotime($booking['checkin_datetime'])) ?>" required>
       </div>
       <div class="form-group">
@@ -614,6 +612,9 @@ function getRoomOptionsHtml(roomTypeId, currentRoomId) {
   if (!availableRoomsList || availableRoomsList.length === 0) {
     return '<option value="">⏳ Loading rooms...</option>';
   }
+  if (!roomTypeId) {
+    return '<option value="">— Select Room Type first —</option>';
+  }
   const filtered = availableRoomsList.filter(r => String(r.room_type_id) === String(roomTypeId));
   let html = '<option value="">— UNASSIGNED —</option>';
   const assignedRoomIds = Array.from(selectedRoomsMap.values()).map(r => r.roomId).filter(id => id > 0);
@@ -701,6 +702,13 @@ function onRowRoomChange(key, newRoomId) {
   if (!selectedRoomsMap.has(key)) return;
   const room = selectedRoomsMap.get(key);
   const roomId = parseInt(newRoomId) || 0;
+
+  if (roomId > 0 && Array.from(selectedRoomsMap.entries()).some(([otherKey, otherRoom]) => otherKey !== key && otherRoom.roomId === roomId)) {
+    roomSelectError.textContent = 'This room number has already been added to the booking.';
+    roomSelectError.style.display = 'block';
+    renderSelectedRooms();
+    return;
+  }
 
   if (roomId > 0) {
     const roomData = availableRoomsList.find(r => parseInt(r.id) === roomId);
@@ -841,7 +849,15 @@ toggleCorporateFields();
     roomTypeSelect.value = String(INITIAL_ROOMS[0].roomTypeId);
   }
 
-  fetchAvailableRooms(() => renderSelectedRooms());
+  // Trigger dropdown population immediately if rooms already loaded
+  if (availableRoomsList.length > 0) {
+    updateAvailableRoomDropdown();
+  }
+
+  fetchAvailableRooms(() => {
+    renderSelectedRooms();
+    updateAvailableRoomDropdown();
+  });
 
 // ==================== EXTRA CHARGES JAVASCRIPT ====================
 const extraChargePresetSelect = document.getElementById('extraChargePresetSelect');

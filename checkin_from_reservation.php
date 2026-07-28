@@ -22,19 +22,6 @@ if (!$booking) {
 $bookingRooms = getBookingRooms($bookingId);
 $roomNumbersStr = implode(', ', array_map(fn($r) => ($r['room_number'] !== 'Unassigned' ? 'Room ' . $r['room_number'] : 'Unassigned') . ' (' . $r['room_type_name'] . ')', $bookingRooms));
 
-// Guard: block check-in if any room is unassigned
-$hasUnassigned = false;
-foreach ($bookingRooms as $br) {
-    if (empty($br['room_id'])) {
-        $hasUnassigned = true;
-        break;
-    }
-}
-if ($hasUnassigned) {
-    flash('error', 'This reservation has rooms that are not yet assigned. Please assign rooms to all reservations before checking in.');
-    redirect('booking_edit.php?id=' . $bookingId);
-}
-
 $gStmt = db()->prepare("
   SELECT g.* FROM booking_guests bg JOIN guests g ON g.id = bg.guest_id
   WHERE bg.booking_id = :id AND bg.is_primary = 1 LIMIT 1
@@ -54,6 +41,19 @@ foreach ($bookingRooms as $br) {
     }
 }
 $roomBusyNow = !empty($busyRoomsArr);
+
+// Get available rooms grouped by room type for unassigned rooms
+$availableRoomsByType = [];
+foreach ($bookingRooms as $br) {
+    if (empty($br['room_id']) && !empty($br['room_type_id'])) {
+        $rtid = (int) $br['room_type_id'];
+        if (!isset($availableRoomsByType[$rtid])) {
+            $arStmt = db()->prepare("SELECT id, room_number, floor FROM rooms WHERE room_type_id = :rtid AND status = 'available' AND is_active = 1 ORDER BY CAST(room_number AS UNSIGNED)");
+            $arStmt->execute(['rtid' => $rtid]);
+            $availableRoomsByType[$rtid] = $arStmt->fetchAll();
+        }
+    }
+}
 
 $pageTitle = 'Complete Check-In — ' . $booking['booking_code'];
 $activeNav = 'bookings';
@@ -144,7 +144,23 @@ require __DIR__ . '/includes/layout_top.php';
           <tbody>
             <?php foreach ($bookingRooms as $br): ?>
               <tr>
-                <td><strong>Room <?= e($br['room_number']) ?></strong></td>
+                <td>
+                  <?php if (empty($br['room_id'])): ?>
+                    <input type="hidden" name="booking_room_id[]" value="<?= (int)$br['booking_room_id'] ?>">
+                    <input type="hidden" name="room_type_id[]" value="<?= (int)$br['room_type_id'] ?>">
+                    <select name="room_id[]" class="form-control" required>
+                      <option value="">— Select Room —</option>
+                      <?php foreach (($availableRoomsByType[(int)$br['room_type_id']] ?? []) as $ar): ?>
+                        <option value="<?= $ar['id'] ?>">Room <?= e($ar['room_number']) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  <?php else: ?>
+                    <input type="hidden" name="booking_room_id[]" value="<?= (int)$br['booking_room_id'] ?>">
+                    <input type="hidden" name="room_id[]" value="<?= (int)$br['room_id'] ?>">
+                    <input type="hidden" name="room_type_id[]" value="<?= (int)$br['room_type_id'] ?>">
+                    <strong>Room <?= e($br['room_number']) ?></strong>
+                  <?php endif; ?>
+                </td>
                 <td>Floor <?= e($br['floor']) ?></td>
                 <td><?= e($br['room_type_name']) ?></td>
                 <td><?= money((float)$br['rate_per_night']) ?></td>
@@ -354,6 +370,46 @@ function toggleCorporateFields() {
     gstInput.required = false;
   }
 }
+
+// ---- Duplicate room prevention across unassigned room dropdowns ----
+function syncRoomDropdowns() {
+  const allSelects = document.querySelectorAll('select[name="room_id[]"]');
+  const selectedValues = new Set();
+  allSelects.forEach(sel => {
+    if (sel.value) selectedValues.add(sel.value);
+  });
+  allSelects.forEach(sel => {
+    const currentVal = sel.value;
+    Array.from(sel.options).forEach(opt => {
+      if (!opt.value) return;
+      if (opt.value !== currentVal && selectedValues.has(opt.value)) {
+        opt.disabled = true;
+      } else {
+        opt.disabled = false;
+      }
+    });
+  });
+}
+
+document.querySelectorAll('select[name="room_id[]"]').forEach(sel => {
+  sel.addEventListener('change', syncRoomDropdowns);
+});
+
+document.getElementById('convertForm').addEventListener('submit', function(e) {
+  const allSelects = document.querySelectorAll('select[name="room_id[]"]');
+  const seen = new Set();
+  for (const sel of allSelects) {
+    if (!sel.value) continue;
+    if (seen.has(sel.value)) {
+      e.preventDefault();
+      alert('Each room can only be assigned once. Please select a different room for one of the rows.');
+      return false;
+    }
+    seen.add(sel.value);
+  }
+});
+
+syncRoomDropdowns();
 </script>
 
 <?php require __DIR__ . '/includes/layout_bottom.php'; ?>

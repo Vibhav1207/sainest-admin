@@ -76,12 +76,29 @@ try {
         throw new RuntimeException('No rooms found for this reservation.');
     }
 
-    // Block check-in if any room is unassigned (room_id is NULL)
-    foreach ($bookingRooms as $br) {
-        if (empty($br['room_id'])) {
-            throw new RuntimeException('One or more rooms are not yet assigned. Please assign all rooms via the booking edit page before checking in.');
+    // Process room assignments from form data (for unassigned rooms)
+    $postedBookingRoomIds = $_POST['booking_room_id'] ?? [];
+    $postedRoomIds = $_POST['room_id'] ?? [];
+    $postedRoomTypeIds = $_POST['room_type_id'] ?? [];
+    $roomUpdates = [];
+    for ($i = 0; $i < count($postedBookingRoomIds); $i++) {
+        $brid = (int) $postedBookingRoomIds[$i];
+        $rid = !empty($postedRoomIds[$i]) ? (int) $postedRoomIds[$i] : null;
+        $rtid = !empty($postedRoomTypeIds[$i]) ? (int) $postedRoomTypeIds[$i] : null;
+        if ($brid > 0 && $rid > 0) {
+            $roomUpdates[$brid] = ['room_id' => $rid, 'room_type_id' => $rtid];
         }
     }
+
+    // Apply room assignments to booking_rooms and update in-memory data
+    $updBr = $pdo->prepare("UPDATE booking_rooms SET room_id = :rid, room_type_id = COALESCE(:rtid, room_type_id) WHERE id = :brid");
+    foreach ($roomUpdates as $brid => $upd) {
+        $updBr->execute(['rid' => $upd['room_id'], 'rtid' => $upd['room_type_id'], 'brid' => $brid]);
+    }
+
+    // Refresh booking rooms after updates
+    $bookingRooms = getBookingRooms($bookingId);
+    assertUniqueBookingRoomIds($bookingRooms);
 
     $roomNumbersArr = [];
 
@@ -230,6 +247,17 @@ try {
         'notes'        => $specialRequests ?: null,
         'id'           => $bookingId,
     ]);
+
+    // Sync room_id on bookings table if it was NULL (first assigned room)
+    if (empty($booking['room_id'])) {
+        foreach ($bookingRooms as $br) {
+            if (!empty($br['room_id'])) {
+                $pdo->prepare("UPDATE bookings SET room_id = :rid WHERE id = :bid AND room_id IS NULL")
+                    ->execute(['rid' => $br['room_id'], 'bid' => $bookingId]);
+                break;
+            }
+        }
+    }
 
     if ($extraAdvance > 0) {
         $payStmt = $pdo->prepare("INSERT INTO payments (booking_id, amount, mode, payment_type, received_by, note) VALUES (:b, :a, 'cash', 'advance', :u, 'Additional advance collected at check-in')");

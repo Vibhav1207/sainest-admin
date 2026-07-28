@@ -115,6 +115,8 @@ try {
     if (empty($selectedRooms) || $guestName === '') {
         throw new RuntimeException('Please select at least one room type and fill in contact name.');
     }
+    assertUniqueBookingRoomIds($selectedRooms);
+    ensureBookingRoomsTableExists();
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $checkinDate) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $checkoutDate)) {
         throw new RuntimeException('Please provide valid check-in and check-out dates.');
     }

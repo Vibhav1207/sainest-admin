@@ -9,11 +9,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck()) {
     $action = $_POST['action'] ?? '';
     try {
         if ($action === 'add_user') {
+            $password = $_POST['password'];
+            if (strlen($password) < 6) {
+                throw new RuntimeException('Password must be at least 6 characters.');
+            }
             $stmt = db()->prepare("INSERT INTO users (full_name, username, password_hash, role, phone, status) VALUES (:n, :u, :p, :r, :ph, 'active')");
             $stmt->execute([
                 'n' => trim($_POST['full_name']),
                 'u' => trim($_POST['username']),
-                'p' => password_hash($_POST['password'], PASSWORD_DEFAULT),
+                'p' => password_hash($password, PASSWORD_DEFAULT),
                 'r' => $_POST['role'],
                 'ph' => trim($_POST['phone']),
             ]);
@@ -28,8 +32,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrfCheck()) {
                 flash('error', 'You cannot disable your own account.');
             }
         } elseif ($action === 'reset_password') {
+            $newPassword = $_POST['new_password'];
+            if (strlen($newPassword) < 6) {
+                throw new RuntimeException('Password must be at least 6 characters.');
+            }
             $stmt = db()->prepare("UPDATE users SET password_hash = :p WHERE id = :id");
-            $stmt->execute(['p' => password_hash($_POST['new_password'], PASSWORD_DEFAULT), 'id' => (int) $_POST['user_id']]);
+            $stmt->execute(['p' => password_hash($newPassword, PASSWORD_DEFAULT), 'id' => (int) $_POST['user_id']]);
             flash('success', 'Password reset successfully.');
         }
     } catch (Throwable $e) {
